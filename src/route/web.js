@@ -4,6 +4,8 @@ import authController from "../controllers/authController";
 import { protect } from "../middleware/authMiddleware.js";
 import upload from "../middleware/uploadMiddleware.js";
 import userProfileController from "../controllers/userProfileController.js";
+import walletController from "../controllers/walletController.js";
+import categoryController from "../controllers/categoryController.js";
 
 
 let router = express.Router();
@@ -36,6 +38,19 @@ let initWebRoutes = (app) => {
         userProfileController.updateMe
     );
 
+    // Wallets (no bank integrations)
+    router.post("/api/wallets", protect, walletController.create);
+    router.get("/api/wallets", protect, walletController.list);
+    router.get("/api/wallets/:walletId", protect, walletController.detail);
+    router.patch("/api/wallets/:walletId", protect, walletController.update);
+    router.delete("/api/wallets/:walletId", protect, walletController.remove);
+
+    // Categories
+    router.get("/api/categories/system", categoryController.listSystem);
+    router.get("/api/categories", protect, categoryController.listMine);
+    router.post("/api/categories", protect, categoryController.createMine);
+    router.patch("/api/categories/:categoryId", protect, categoryController.updateMine);
+    router.delete("/api/categories/:categoryId", protect, categoryController.deleteMine);
 
     return app.use("/", router);
 };

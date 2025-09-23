@@ -15,7 +15,7 @@ const WalletSchema = new mongoose.Schema(
         },
         walletType: {
             type: String,
-            enum: ['bank', 'ewallet', 'cash', 'credit_card'],
+            enum: ['bank', 'e-wallet', 'cash', 'credit_card'],
             required: true,
         },
         provider: {
