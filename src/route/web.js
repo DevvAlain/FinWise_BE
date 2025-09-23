@@ -1,11 +1,13 @@
 import express from "express";
 // import userController from "../controllers/userController";
 import authController from "../controllers/authController";
-import { protect } from "../middleware/authMiddleware.js";
+import { protect, authorize } from "../middleware/authMiddleware.js";
 import upload from "../middleware/uploadMiddleware.js";
 import userProfileController from "../controllers/userProfileController.js";
 import walletController from "../controllers/walletController.js";
 import categoryController from "../controllers/categoryController.js";
+import categoryAdminController from "../controllers/categoryAdminController.js";
+import { enforceWalletQuota } from "../middleware/quotaMiddleware.js";
 
 
 let router = express.Router();
@@ -39,7 +41,7 @@ let initWebRoutes = (app) => {
     );
 
     // Wallets (no bank integrations)
-    router.post("/api/wallets", protect, walletController.create);
+    router.post("/api/wallets", protect, enforceWalletQuota, walletController.create);
     router.get("/api/wallets", protect, walletController.list);
     router.get("/api/wallets/:walletId", protect, walletController.detail);
     router.patch("/api/wallets/:walletId", protect, walletController.update);
@@ -52,6 +54,10 @@ let initWebRoutes = (app) => {
     router.patch("/api/categories/:categoryId", protect, categoryController.updateMine);
     router.delete("/api/categories/:categoryId", protect, categoryController.deleteMine);
 
+    // Admin: System categories
+    router.post("/api/admin/categories/system", protect, authorize("admin"), categoryAdminController.create);
+    router.patch("/api/admin/categories/system/:categoryId", protect, authorize("admin"), categoryAdminController.update);
+    router.delete("/api/admin/categories/system/:categoryId", protect, authorize("admin"), categoryAdminController.remove);
     return app.use("/", router);
 };
 

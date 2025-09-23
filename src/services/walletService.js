@@ -1,4 +1,5 @@
 import Wallet from "../models/wallet.js";
+import { ensureUsage, getPeriodMonth } from "../middleware/quotaMiddleware.js";
 
 const createWallet = async (userId, payload) => {
     const { walletName, walletType, currency = "VND", provider, accountNumber } = payload;
@@ -13,6 +14,9 @@ const createWallet = async (userId, payload) => {
         provider,
         accountNumber,
     });
+    // increment wallet count in quota usage for this period
+    const usage = await ensureUsage(userId);
+    await usage.updateOne({ $inc: { walletsCount: 1 } });
     return { success: true, statusCode: 201, wallet };
 };
 

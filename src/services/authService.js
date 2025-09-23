@@ -135,7 +135,7 @@ let login = async (email, password) => {
 
 let generateToken = (user) => {
   const accessToken = jwt.sign(
-    { id: user._id },
+    { id: user._id, role: user.role },
     jwtConfig.secret,
     {
       expiresIn: jwtConfig.expiresIn,
@@ -174,6 +174,7 @@ const verifyToken = async (token) => {
       statusCode: 200,
       user: {
         id: user._id.toString(),
+        role: user.role,
         email: user.email,
         fullName: user.fullName,
         phone: user.phone,
