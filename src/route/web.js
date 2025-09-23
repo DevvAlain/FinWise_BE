@@ -7,7 +7,8 @@ import userProfileController from "../controllers/userProfileController.js";
 import walletController from "../controllers/walletController.js";
 import categoryController from "../controllers/categoryController.js";
 import categoryAdminController from "../controllers/categoryAdminController.js";
-import { enforceWalletQuota } from "../middleware/quotaMiddleware.js";
+import { enforceWalletQuota, enforceTransactionQuota } from "../middleware/quotaMiddleware.js";
+import transactionController from "../controllers/transactionController.js";
 
 
 let router = express.Router();
@@ -58,6 +59,13 @@ let initWebRoutes = (app) => {
     router.post("/api/admin/categories/system", protect, authorize("admin"), categoryAdminController.create);
     router.patch("/api/admin/categories/system/:categoryId", protect, authorize("admin"), categoryAdminController.update);
     router.delete("/api/admin/categories/system/:categoryId", protect, authorize("admin"), categoryAdminController.remove);
+
+    // Transactions
+    router.post("/api/transactions", protect, enforceTransactionQuota, transactionController.create);
+    router.get("/api/transactions", protect, transactionController.list);
+    router.get("/api/transactions/:id", protect, transactionController.detail);
+    router.patch("/api/transactions/:id", protect, transactionController.update);
+    router.delete("/api/transactions/:id", protect, transactionController.remove);
     return app.use("/", router);
 };
 
