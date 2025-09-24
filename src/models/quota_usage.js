@@ -9,6 +9,7 @@ const QuotaUsageSchema = new mongoose.Schema(
         transactionsCount: { type: Number, default: 0 },
         aiCallsCount: { type: Number, default: 0 },
         budgetsCount: { type: Number, default: 0 },
+        savingGoalsCount: { type: Number, default: 0 },
         lastResetAt: { type: Date },
     },
     { timestamps: true }

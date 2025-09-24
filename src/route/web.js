@@ -7,9 +7,10 @@ import userProfileController from "../controllers/userProfileController.js";
 import walletController from "../controllers/walletController.js";
 import categoryController from "../controllers/categoryController.js";
 import categoryAdminController from "../controllers/categoryAdminController.js";
-import { enforceWalletQuota, enforceTransactionQuota, enforceBudgetQuota } from "../middleware/quotaMiddleware.js";
+import { enforceWalletQuota, enforceTransactionQuota, enforceBudgetQuota, enforceSavingGoalQuota } from "../middleware/quotaMiddleware.js";
 import transactionController from "../controllers/transactionController.js";
 import budgetController from "../controllers/budgetController.js";
+import savingGoalController from "../controllers/savingGoalController.js";
 
 
 let router = express.Router();
@@ -75,6 +76,15 @@ let initWebRoutes = (app) => {
     router.patch("/api/budgets/:id", protect, budgetController.update);
     router.delete("/api/budgets/:id", protect, budgetController.remove);
     router.get("/api/budgets/status", protect, budgetController.getStatus);
+
+    // Saving Goals
+    router.post("/api/goals", protect, enforceSavingGoalQuota, savingGoalController.create);
+    router.get("/api/goals", protect, savingGoalController.list);
+    router.get("/api/goals/:id", protect, savingGoalController.detail);
+    router.patch("/api/goals/:id", protect, savingGoalController.update);
+    router.delete("/api/goals/:id", protect, savingGoalController.remove);
+    router.patch("/api/goals/:id/progress", protect, savingGoalController.updateProgress);
+    router.get("/api/goals/dashboard", protect, savingGoalController.getDashboard);
 
     return app.use("/", router);
 };

@@ -69,6 +69,22 @@ const enforceBudgetQuota = async (req, res, next) => {
     }
 };
 
-export { enforceWalletQuota, enforceTransactionQuota, enforceBudgetQuota, ensureUsage, getPeriodMonth };
+// Enforce saving goals count
+const enforceSavingGoalQuota = async (req, res, next) => {
+    try {
+        const plan = await getActivePlan(req.user.id);
+        if (!plan) return next();
+        const usage = await ensureUsage(req.user.id);
+        if (typeof plan.maxSavingGoals === 'number' && usage.savingGoalsCount >= plan.maxSavingGoals) {
+            return res.status(403).json({ success: false, message: 'Vượt giới hạn số mục tiêu tiết kiệm theo gói' });
+        }
+        next();
+    } catch (e) {
+        console.error('Saving goal quota error:', e);
+        return res.status(500).json({ success: false, message: 'Lỗi kiểm tra hạn mức mục tiêu tiết kiệm' });
+    }
+};
+
+export { enforceWalletQuota, enforceTransactionQuota, enforceBudgetQuota, enforceSavingGoalQuota, ensureUsage, getPeriodMonth };
 
 
