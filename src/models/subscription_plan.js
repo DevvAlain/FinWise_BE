@@ -43,6 +43,10 @@ const SubscriptionPlanSchema = new mongoose.Schema(
             type: Number,
             default: 50,
         },
+        maxBudgets: {
+            type: Number,
+            default: 10,
+        },
         isActive: {
             type: Boolean,
             default: true,
