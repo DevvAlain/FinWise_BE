@@ -7,8 +7,9 @@ import userProfileController from "../controllers/userProfileController.js";
 import walletController from "../controllers/walletController.js";
 import categoryController from "../controllers/categoryController.js";
 import categoryAdminController from "../controllers/categoryAdminController.js";
-import { enforceWalletQuota, enforceTransactionQuota } from "../middleware/quotaMiddleware.js";
+import { enforceWalletQuota, enforceTransactionQuota, enforceBudgetQuota } from "../middleware/quotaMiddleware.js";
 import transactionController from "../controllers/transactionController.js";
+import budgetController from "../controllers/budgetController.js";
 
 
 let router = express.Router();
@@ -66,6 +67,15 @@ let initWebRoutes = (app) => {
     router.get("/api/transactions/:id", protect, transactionController.detail);
     router.patch("/api/transactions/:id", protect, transactionController.update);
     router.delete("/api/transactions/:id", protect, transactionController.remove);
+
+    // Budgets
+    router.post("/api/budgets", protect, enforceBudgetQuota, budgetController.create);
+    router.get("/api/budgets", protect, budgetController.list);
+    router.get("/api/budgets/:id", protect, budgetController.detail);
+    router.patch("/api/budgets/:id", protect, budgetController.update);
+    router.delete("/api/budgets/:id", protect, budgetController.remove);
+    router.get("/api/budgets/status", protect, budgetController.getStatus);
+
     return app.use("/", router);
 };
 

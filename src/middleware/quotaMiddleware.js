@@ -53,6 +53,22 @@ const enforceTransactionQuota = async (req, res, next) => {
     }
 };
 
-export { enforceWalletQuota, enforceTransactionQuota, ensureUsage, getPeriodMonth };
+// Enforce budget count
+const enforceBudgetQuota = async (req, res, next) => {
+    try {
+        const plan = await getActivePlan(req.user.id);
+        if (!plan) return next();
+        const usage = await ensureUsage(req.user.id);
+        if (typeof plan.maxBudgets === 'number' && usage.budgetsCount >= plan.maxBudgets) {
+            return res.status(403).json({ success: false, message: 'Vượt giới hạn số ngân sách theo gói' });
+        }
+        next();
+    } catch (e) {
+        console.error('Budget quota error:', e);
+        return res.status(500).json({ success: false, message: 'Lỗi kiểm tra hạn mức ngân sách' });
+    }
+};
+
+export { enforceWalletQuota, enforceTransactionQuota, enforceBudgetQuota, ensureUsage, getPeriodMonth };
 
 
