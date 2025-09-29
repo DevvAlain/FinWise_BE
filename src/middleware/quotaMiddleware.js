@@ -17,10 +17,21 @@ const getPeriodMonth = (date = new Date()) => {
   return `${y}-${m}`;
 };
 
-const ensureUsage = async (userId) => {
+const ensureUsage = async (userId, session = null) => {
   const periodMonth = getPeriodMonth();
-  let usage = await QuotaUsage.findOne({ user: userId, periodMonth });
-  if (!usage) usage = await QuotaUsage.create({ user: userId, periodMonth });
+  let query = QuotaUsage.findOne({ user: userId, periodMonth });
+  if (session) {
+    query = query.session(session);
+  }
+  let usage = await query;
+  if (!usage) {
+    const createOptions = session ? { session } : undefined;
+    const createdDocs = await QuotaUsage.create(
+      [{ user: userId, periodMonth }],
+      createOptions,
+    );
+    usage = createdDocs[0];
+  }
   return usage;
 };
 
