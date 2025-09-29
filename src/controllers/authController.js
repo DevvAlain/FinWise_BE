@@ -1,9 +1,9 @@
-import authService from "../services/authService.js";
+import authService from '../services/authService.js';
 
 // Đăng ký tài khoản mới
 const register = async (req, res) => {
   try {
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
     const result = await authService.register(req.body, baseUrl);
 
     return res.status(result.statusCode).json({
@@ -14,10 +14,10 @@ const register = async (req, res) => {
       user: result.user,
     });
   } catch (error) {
-    console.error("Register error:", error);
+    console.error('Register error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -37,10 +37,10 @@ const login = async (req, res) => {
       needVerification: result.needVerification || false,
     });
   } catch (error) {
-    console.error("Login error:", error);
+    console.error('Login error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -53,7 +53,7 @@ const googleLogin = async (req, res) => {
     if (!email) {
       return res.status(400).json({
         success: false,
-        message: "Thiếu thông tin email từ Google",
+        message: 'Thiếu thông tin email từ Google',
       });
     }
 
@@ -69,10 +69,10 @@ const googleLogin = async (req, res) => {
       needVerification: result.needVerification || false,
     });
   } catch (error) {
-    console.error("Google login error:", error);
+    console.error('Google login error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -92,7 +92,7 @@ const verifyEmail = async (req, res) => {
       });
     }
 
-    if (req.headers.accept && req.headers.accept.includes("application/json")) {
+    if (req.headers.accept && req.headers.accept.includes('application/json')) {
       return res.status(result.statusCode).json({
         success: true,
         message: result.message,
@@ -110,10 +110,10 @@ const verifyEmail = async (req, res) => {
       user: result.user,
     });
   } catch (error) {
-    console.error("Verify email error:", error);
+    console.error('Verify email error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -122,7 +122,7 @@ const verifyEmail = async (req, res) => {
 const resendVerificationEmail = async (req, res) => {
   try {
     const { email } = req.body;
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
 
     const result = await authService.resendVerificationEmail(email, baseUrl);
 
@@ -131,10 +131,10 @@ const resendVerificationEmail = async (req, res) => {
       message: result.message,
     });
   } catch (error) {
-    console.error("Resend verification error:", error);
+    console.error('Resend verification error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -143,7 +143,7 @@ const resendVerificationEmail = async (req, res) => {
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
 
     const result = await authService.forgotPassword(email, baseUrl);
 
@@ -152,10 +152,10 @@ const forgotPassword = async (req, res) => {
       message: result.message,
     });
   } catch (error) {
-    console.error("Forgot password error:", error);
+    console.error('Forgot password error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -173,10 +173,10 @@ const resetPassword = async (req, res) => {
       message: result.message,
     });
   } catch (error) {
-    console.error("Reset password error:", error);
+    console.error('Reset password error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -188,17 +188,17 @@ const changePassword = async (req, res) => {
     const result = await authService.changePassword(
       userId,
       oldPassword,
-      newPassword
+      newPassword,
     );
     return res.status(result.statusCode).json({
       success: result.success,
       message: result.message,
     });
   } catch (error) {
-    console.error("Change password error:", error);
+    console.error('Change password error:', error);
     res.status(500).json({
       success: false,
-      message: "Server error",
+      message: 'Server error',
     });
   }
 };
@@ -211,7 +211,7 @@ const refreshToken = async (req, res) => {
     if (!refreshToken) {
       return res.status(400).json({
         success: false,
-        message: "Refresh token không được cung cấp",
+        message: 'Refresh token không được cung cấp',
       });
     }
 
@@ -223,10 +223,10 @@ const refreshToken = async (req, res) => {
       refreshToken: result.refreshToken,
     });
   } catch (error) {
-    console.error("Refresh token error:", error);
+    console.error('Refresh token error:', error);
     res.status(500).json({
       success: false,
-      message: "Lỗi máy chủ",
+      message: 'Lỗi máy chủ',
     });
   }
 };

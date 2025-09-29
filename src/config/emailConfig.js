@@ -1,12 +1,12 @@
-import nodemailer from "nodemailer";
-import dotenv from "dotenv";
+import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
-const APP_NAME = process.env.APP_NAME || "FinWise";
+const APP_NAME = process.env.APP_NAME || 'FinWise';
 
 const transporter = nodemailer.createTransport({
-  service: process.env.EMAIL_SERVICE || "gmail",
+  service: process.env.EMAIL_SERVICE || 'gmail',
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASSWORD,
@@ -17,10 +17,10 @@ const transporter = nodemailer.createTransport({
 const sendEmail = async (mailOptions) => {
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log("Email sent successfully:", info.messageId);
+    console.log('Email sent successfully:', info.messageId);
     return info;
   } catch (error) {
-    console.error("Email sending error:", error);
+    console.error('Email sending error:', error);
     throw error;
   }
 };
@@ -51,7 +51,7 @@ const verificationEmailTemplate = (name, verificationLink) => {
               </tr>
               <tr>
                 <td style="padding:36px 28px;">
-                  <h2 style="color:#0f172a;font-size:22px;font-weight:600;margin:0 0 16px 0;text-align:center;">Chào ${name || "bạn"}! 👋</h2>
+                  <h2 style="color:#0f172a;font-size:22px;font-weight:600;margin:0 0 16px 0;text-align:center;">Chào ${name || 'bạn'}! 👋</h2>
                   <p style="color:#334155;margin:0 0 16px 0;">Cảm ơn bạn đã đăng ký ${APP_NAME}. Nhấp nút dưới đây để xác thực tài khoản và bắt đầu theo dõi chi tiêu, đặt ngân sách, và nhận gợi ý tiết kiệm từ AI.</p>
                   <div style="text-align:center;margin:28px 0;">
                     <a href="${verificationLink}" style="display:inline-block;background:#0ea5e9;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:600;font-size:15px;">Xác thực tài khoản</a>
@@ -99,7 +99,7 @@ const resetPasswordEmailTemplate = (name, resetLink) => {
               </tr>
               <tr>
                 <td style="padding:36px 28px;">
-                  <h2 style="color:#0f172a;font-size:22px;font-weight:600;margin:0 0 16px 0;text-align:center;">Chào ${name || "bạn"}! 👋</h2>
+                  <h2 style="color:#0f172a;font-size:22px;font-weight:600;margin:0 0 16px 0;text-align:center;">Chào ${name || 'bạn'}! 👋</h2>
                   <p style="color:#334155;margin:0 0 16px 0;">Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản ${APP_NAME}. Nhấp nút bên dưới để tạo mật khẩu mới.</p>
                   <div style="text-align:center;margin:28px 0;">
                     <a href="${resetLink}" style="display:inline-block;background:#ef4444;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:600;font-size:15px;">Đặt lại mật khẩu</a>

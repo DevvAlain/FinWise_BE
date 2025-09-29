@@ -48,7 +48,7 @@ const UserSchema = new mongoose.Schema(
   },
   {
     timestamps: true, // tự động tạo createdAt & updatedAt
-  }
+  },
 );
 
 module.exports = mongoose.model('User', UserSchema);

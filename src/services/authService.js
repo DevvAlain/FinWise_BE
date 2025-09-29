@@ -1,13 +1,13 @@
-import User from "../models/user.js";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import jwtConfig from "../config/jwtConfig.js";
-import emailService from "./emailService.js";
-
+import User from '../models/user.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import jwtConfig from '../config/jwtConfig.js';
+import emailService from './emailService.js';
 
 const register = async (userData, baseUrl) => {
   const { email: rawEmail, password, fullName, phone, avatarUrl } = userData;
-  const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : rawEmail;
+  const email =
+    typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : rawEmail;
 
   // Check existing email
   const existingUser = await User.findOne({ email });
@@ -15,7 +15,7 @@ const register = async (userData, baseUrl) => {
     return {
       success: false,
       statusCode: 400,
-      message: "Email đã được sử dụng",
+      message: 'Email đã được sử dụng',
     };
   }
 
@@ -41,7 +41,7 @@ const register = async (userData, baseUrl) => {
       return {
         success: false,
         statusCode: 500,
-        message: "Không thể gửi email xác thực",
+        message: 'Không thể gửi email xác thực',
       };
     }
   }
@@ -51,7 +51,7 @@ const register = async (userData, baseUrl) => {
   return {
     success: true,
     statusCode: 201,
-    message: "Đăng ký thành công. Vui lòng kiểm tra email để xác thực.",
+    message: 'Đăng ký thành công. Vui lòng kiểm tra email để xác thực.',
     accessToken,
     refreshToken,
     user: {
@@ -68,15 +68,17 @@ const register = async (userData, baseUrl) => {
 };
 
 let login = async (email, password) => {
-  const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : email;
-  const normalizedPassword = typeof password === "string" ? password.trim() : password;
+  const normalizedEmail =
+    typeof email === 'string' ? email.trim().toLowerCase() : email;
+  const normalizedPassword =
+    typeof password === 'string' ? password.trim() : password;
   let user = await User.findOne({ email: normalizedEmail });
 
   if (!user) {
     return {
       success: false,
       statusCode: 400,
-      message: "Thông tin đăng nhập không hợp lệ",
+      message: 'Thông tin đăng nhập không hợp lệ',
     };
   }
 
@@ -85,7 +87,7 @@ let login = async (email, password) => {
     return {
       success: false,
       statusCode: 400,
-      message: "Thông tin đăng nhập không hợp lệ",
+      message: 'Thông tin đăng nhập không hợp lệ',
     };
   }
 
@@ -94,7 +96,7 @@ let login = async (email, password) => {
     return {
       success: false,
       statusCode: 400,
-      message: "Thông tin đăng nhập không hợp lệ",
+      message: 'Thông tin đăng nhập không hợp lệ',
     };
   }
 
@@ -102,7 +104,7 @@ let login = async (email, password) => {
     return {
       success: false,
       statusCode: 403,
-      message: "Tài khoản chưa được xác thực qua email",
+      message: 'Tài khoản chưa được xác thực qua email',
     };
   }
 
@@ -115,7 +117,7 @@ let login = async (email, password) => {
   return {
     success: true,
     statusCode: 200,
-    message: "Đăng nhập thành công",
+    message: 'Đăng nhập thành công',
     accessToken,
     refreshToken,
     user: {
@@ -139,7 +141,7 @@ let generateToken = (user) => {
     jwtConfig.secret,
     {
       expiresIn: jwtConfig.expiresIn,
-    }
+    },
   );
 
   const refreshToken = jwt.sign({ id: user._id }, jwtConfig.refreshSecret, {
@@ -156,16 +158,16 @@ const verifyToken = async (token) => {
       return {
         success: false,
         statusCode: 401,
-        message: "Token không chứa ID người dùng",
+        message: 'Token không chứa ID người dùng',
       };
     }
 
-    const user = await User.findById(decoded.id).select("-passwordHash");
+    const user = await User.findById(decoded.id).select('-passwordHash');
     if (!user) {
       return {
         success: false,
         statusCode: 401,
-        message: "Không tìm thấy người dùng",
+        message: 'Không tìm thấy người dùng',
       };
     }
 
@@ -185,11 +187,11 @@ const verifyToken = async (token) => {
       },
     };
   } catch (error) {
-    console.error("Verify token error:", error);
+    console.error('Verify token error:', error);
     return {
       success: false,
       statusCode: 401,
-      message: "Token không hợp lệ hoặc đã hết hạn",
+      message: 'Token không hợp lệ hoặc đã hết hạn',
     };
   }
 };
@@ -208,16 +210,34 @@ const resendVerificationEmail = async (email, baseUrl) => {
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return { success: false, statusCode: 404, message: "Không tìm thấy người dùng" };
+      return {
+        success: false,
+        statusCode: 404,
+        message: 'Không tìm thấy người dùng',
+      };
     }
     const emailResult = await emailService.sendVerificationEmail(user, baseUrl);
     if (!emailResult.success) {
-      return { success: false, statusCode: 500, message: "Không thể gửi email xác thực", error: emailResult.error };
+      return {
+        success: false,
+        statusCode: 500,
+        message: 'Không thể gửi email xác thực',
+        error: emailResult.error,
+      };
     }
-    return { success: true, statusCode: 200, message: "Đã gửi email xác thực thành công" };
+    return {
+      success: true,
+      statusCode: 200,
+      message: 'Đã gửi email xác thực thành công',
+    };
   } catch (error) {
-    console.error("Resend verification error:", error);
-    return { success: false, statusCode: 500, message: "Lỗi máy chủ", error: error.message };
+    console.error('Resend verification error:', error);
+    return {
+      success: false,
+      statusCode: 500,
+      message: 'Lỗi máy chủ',
+      error: error.message,
+    };
   }
 };
 
@@ -229,7 +249,7 @@ const forgotPassword = async (email, baseUrl) => {
 
     if (user) {
       // Gửi email reset password (không dùng cooldown trên model)
-      const { default: emailService } = await import("./emailService.js");
+      const { default: emailService } = await import('./emailService.js');
       await emailService.sendResetPasswordEmail(user, baseUrl);
     }
 
@@ -237,14 +257,14 @@ const forgotPassword = async (email, baseUrl) => {
     return {
       success: true,
       statusCode: 200,
-      message: "Nếu email tồn tại, chúng tôi đã gửi link đặt lại mật khẩu.",
+      message: 'Nếu email tồn tại, chúng tôi đã gửi link đặt lại mật khẩu.',
     };
   } catch (error) {
-    console.error("Forgot password error:", error);
+    console.error('Forgot password error:', error);
     return {
       success: false,
       statusCode: 500,
-      message: "Lỗi hệ thống",
+      message: 'Lỗi hệ thống',
       error: error.message,
     };
   }
@@ -258,18 +278,18 @@ const resetPasswordWithToken = async (token, newPassword) => {
       return {
         success: false,
         statusCode: 400,
-        message: "Mật khẩu phải có ít nhất 6 ký tự",
+        message: 'Mật khẩu phải có ít nhất 6 ký tự',
       };
     }
 
     const result = await emailService.resetPassword(token, newPassword);
     return result;
   } catch (error) {
-    console.error("Reset password error:", error);
+    console.error('Reset password error:', error);
     return {
       success: false,
       statusCode: 500,
-      message: "Lỗi hệ thống",
+      message: 'Lỗi hệ thống',
       error: error.message,
     };
   }
@@ -281,7 +301,7 @@ const changePassword = async (userId, oldPassword, newPassword) => {
       return {
         success: false,
         statusCode: 400,
-        message: "Vui lòng nhập đầy đủ mật khẩu cũ và mật khẩu mới",
+        message: 'Vui lòng nhập đầy đủ mật khẩu cũ và mật khẩu mới',
       };
     }
 
@@ -289,7 +309,7 @@ const changePassword = async (userId, oldPassword, newPassword) => {
       return {
         success: false,
         statusCode: 400,
-        message: "Mật khẩu mới phải có ít nhất 6 ký tự",
+        message: 'Mật khẩu mới phải có ít nhất 6 ký tự',
       };
     }
 
@@ -298,16 +318,19 @@ const changePassword = async (userId, oldPassword, newPassword) => {
       return {
         success: false,
         statusCode: 404,
-        message: "Không tìm thấy người dùng",
+        message: 'Không tìm thấy người dùng',
       };
     }
 
-    const isValidPassword = await bcrypt.compare(oldPassword, user.passwordHash);
+    const isValidPassword = await bcrypt.compare(
+      oldPassword,
+      user.passwordHash,
+    );
     if (!isValidPassword) {
       return {
         success: false,
         statusCode: 400,
-        message: "Mật khẩu cũ không chính xác",
+        message: 'Mật khẩu cũ không chính xác',
       };
     }
 
@@ -315,7 +338,7 @@ const changePassword = async (userId, oldPassword, newPassword) => {
       return {
         success: false,
         statusCode: 400,
-        message: "Mật khẩu mới không được trùng với mật khẩu cũ",
+        message: 'Mật khẩu mới không được trùng với mật khẩu cũ',
       };
     }
 
@@ -328,14 +351,14 @@ const changePassword = async (userId, oldPassword, newPassword) => {
     return {
       success: true,
       statusCode: 200,
-      message: "Mật khẩu đã được thay đổi thành công",
+      message: 'Mật khẩu đã được thay đổi thành công',
     };
   } catch (error) {
-    console.error("Change password error:", error);
+    console.error('Change password error:', error);
     return {
       success: false,
       statusCode: 500,
-      message: "Lỗi khi thay đổi mật khẩu",
+      message: 'Lỗi khi thay đổi mật khẩu',
       error: error.message,
     };
   }
@@ -347,12 +370,12 @@ const refreshToken = async (refreshToken) => {
     const decoded = jwt.verify(refreshToken, jwtConfig.refreshSecret);
 
     // Find user
-    const user = await User.findById(decoded.id).select("-passwordHash");
+    const user = await User.findById(decoded.id).select('-passwordHash');
     if (!user) {
       return {
         success: false,
         statusCode: 404,
-        message: "Không tìm thấy người dùng",
+        message: 'Không tìm thấy người dùng',
       };
     }
 
@@ -362,16 +385,16 @@ const refreshToken = async (refreshToken) => {
     return {
       success: true,
       statusCode: 200,
-      message: "Làm mới token thành công",
+      message: 'Làm mới token thành công',
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,
     };
   } catch (error) {
-    console.error("Refresh token error:", error);
+    console.error('Refresh token error:', error);
     return {
       success: false,
       statusCode: 401,
-      message: "Refresh token không hợp lệ hoặc đã hết hạn",
+      message: 'Refresh token không hợp lệ hoặc đã hết hạn',
     };
   }
 };
@@ -385,7 +408,7 @@ const googleLogin = async (userData) => {
       return {
         success: false,
         statusCode: 400,
-        message: "Không lấy được email từ Google",
+        message: 'Không lấy được email từ Google',
       };
     }
 
@@ -399,10 +422,10 @@ const googleLogin = async (userData) => {
       const hashedPassword = await bcrypt.hash(randomPassword, salt);
 
       user = new User({
-        fullName: name || "Google User",
+        fullName: name || 'Google User',
         email,
         passwordHash: hashedPassword,
-        avatarUrl: picture || "",
+        avatarUrl: picture || '',
       });
       await user.save();
     }
@@ -417,7 +440,7 @@ const googleLogin = async (userData) => {
     return {
       success: true,
       statusCode: 200,
-      message: "Đăng nhập Google thành công",
+      message: 'Đăng nhập Google thành công',
       accessToken,
       refreshToken,
       user: {
@@ -433,11 +456,11 @@ const googleLogin = async (userData) => {
       needVerification: false,
     };
   } catch (error) {
-    console.error("Google login error:", error);
+    console.error('Google login error:', error);
     return {
       success: false,
       statusCode: 500,
-      message: "Lỗi server khi đăng nhập Google",
+      message: 'Lỗi server khi đăng nhập Google',
       error: error.message,
     };
   }
