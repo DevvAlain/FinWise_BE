@@ -17,13 +17,13 @@ const softDeletePlugin = function (schema) {
 
   // Tự động bỏ qua tài liệu đã xóa khi query
   schema.pre(
-    ["find", "findOne", "findOneAndUpdate", "count", "countDocuments"],
+    ['find', 'findOne', 'findOneAndUpdate', 'count', 'countDocuments'],
     function () {
       // Nếu không có điều kiện isDeleted, thêm vào
-      if (!this._conditions.hasOwnProperty("isDeleted")) {
+      if (!this._conditions.hasOwnProperty('isDeleted')) {
         this._conditions.isDeleted = false;
       }
-    }
+    },
   );
 
   // Thêm query helper để bao gồm tài liệu đã xóa

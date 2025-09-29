@@ -1,8 +1,8 @@
-import { v2 as cloudinary } from "cloudinary";
-import fs from "fs";
-import path from "path";
-import os from "os";
-import dotenv from "dotenv";
+import { v2 as cloudinary } from 'cloudinary';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
@@ -21,13 +21,13 @@ cloudinary.config({
  */
 const uploadImage = async (file) => {
   try {
-    console.log("Starting Cloudinary upload with file:", file.originalname);
-    console.log("File object:", {
+    console.log('Starting Cloudinary upload with file:', file.originalname);
+    console.log('File object:', {
       originalname: file.originalname,
       mimetype: file.mimetype,
       size: file.size,
       hasBuffer: !!file.buffer,
-      hasPath: !!file.path
+      hasPath: !!file.path,
     });
 
     let uploadSource;
@@ -40,7 +40,7 @@ const uploadImage = async (file) => {
       // For disk storage, use file path
       uploadSource = file.path;
     } else {
-      throw new Error("No file data available for upload");
+      throw new Error('No file data available for upload');
     }
 
     // Upload file lên Cloudinary
@@ -48,51 +48,51 @@ const uploadImage = async (file) => {
       cloudinary.uploader.upload(
         uploadSource,
         {
-          resource_type: "image",
-          folder: "avatars",
+          resource_type: 'image',
+          folder: 'avatars',
           use_filename: true,
           unique_filename: true,
           overwrite: true,
         },
         (error, result) => {
           if (error) {
-            console.error("Cloudinary upload error:", error);
+            console.error('Cloudinary upload error:', error);
             return reject(error);
           }
           resolve(result);
-        }
+        },
       );
     });
 
-    console.log("Cloudinary upload successful:", result.secure_url);
+    console.log('Cloudinary upload successful:', result.secure_url);
 
     return {
       success: true,
       statusCode: 200,
-      message: "Tải ảnh lên thành công",
+      message: 'Tải ảnh lên thành công',
       imageUrl: result.secure_url,
       imageId: result.public_id,
       imageData: result,
     };
   } catch (error) {
-    console.error("Cloudinary upload error:", error);
+    console.error('Cloudinary upload error:', error);
     return {
       success: false,
       statusCode: 500,
-      message: "Lỗi khi tải ảnh lên Cloudinary",
+      message: 'Lỗi khi tải ảnh lên Cloudinary',
       error: error.message,
     };
   }
 };
 
-const uploadAudioBuffer = async (buffer, filename = "speech.wav") => {
+const uploadAudioBuffer = async (buffer, filename = 'speech.wav') => {
   try {
     const tempPath = path.join(os.tmpdir(), `${Date.now()}-${filename}`);
     await fs.promises.writeFile(tempPath, buffer);
 
     const result = await cloudinary.uploader.upload(tempPath, {
-      resource_type: "video", // audio nằm trong "video" ở Cloudinary
-      folder: "lesson_audio",
+      resource_type: 'video', // audio nằm trong "video" ở Cloudinary
+      folder: 'lesson_audio',
       use_filename: true,
     });
 
@@ -105,7 +105,7 @@ const uploadAudioBuffer = async (buffer, filename = "speech.wav") => {
       publicId: result.public_id,
     };
   } catch (error) {
-    console.error("Upload audio error:", error);
+    console.error('Upload audio error:', error);
     return {
       success: false,
       message: error.message,
@@ -122,24 +122,24 @@ const deleteImage = async (publicId) => {
   try {
     const result = await cloudinary.uploader.destroy(publicId);
 
-    if (result.result === "ok" || result.result === "not found") {
+    if (result.result === 'ok' || result.result === 'not found') {
       return {
         success: true,
-        message: "Xóa ảnh thành công",
+        message: 'Xóa ảnh thành công',
         result,
       };
     } else {
       return {
         success: false,
-        message: "Không thể xóa ảnh",
+        message: 'Không thể xóa ảnh',
         result,
       };
     }
   } catch (error) {
-    console.error("Cloudinary delete error:", error);
+    console.error('Cloudinary delete error:', error);
     return {
       success: false,
-      message: "Lỗi khi xóa ảnh",
+      message: 'Lỗi khi xóa ảnh',
       error: error.message,
     };
   }
