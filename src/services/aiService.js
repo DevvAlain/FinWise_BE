@@ -153,11 +153,45 @@ const applyCategoryToPayload = (payload, resolution) => {
   return payload;
 };
 
-export async function createTransactionFromText(userId, { text, walletId }) {
+export async function generateTransactionDraftFromText(userId, { text, walletId }) {
   const parsed = await parseExpense(userId, text);
+  const confidence =
+    typeof parsed.confidence === 'number' ? parsed.confidence : null;
   const minConfidence = Number(process.env.AI_MIN_CONFIDENCE || 0.6);
 
-  const baseDraft = {
+  let wallet = walletId || parsed.wallet;
+  let walletDoc = null;
+
+  if (wallet) {
+    walletDoc = await Wallet.findOne({
+      _id: wallet,
+      user: userId,
+      isActive: true,
+    });
+    if (!walletDoc) {
+      return {
+        success: false,
+        statusCode: 404,
+        message: 'Khong tim thay vi',
+      };
+    }
+  } else {
+    walletDoc = await Wallet.findOne({
+      user: userId,
+      isActive: true,
+    }).sort({ createdAt: 1 });
+    if (!walletDoc) {
+      return {
+        success: false,
+        statusCode: 400,
+        message: 'Ban chua co vi de ghi nhan giao dich',
+      };
+    }
+    wallet = walletDoc._id;
+  }
+
+  const draft = {
+    walletId: walletDoc._id,
     type: parsed.type || 'expense',
     amount: parsed.amount,
     currency: parsed.currency || 'VND',
@@ -166,36 +200,15 @@ export async function createTransactionFromText(userId, { text, walletId }) {
     description: parsed.description || text,
   };
 
-  if (
-    typeof parsed.confidence === 'number' &&
-    parsed.confidence < minConfidence
-  ) {
-    return {
-      success: true,
-      statusCode: 200,
-      draft: baseDraft,
-      needsConfirmation: true,
-      message: 'Do tin cay thap, can xac nhan truoc khi tao giao dich',
-    };
-  }
+  let needsConfirmation = false;
+  let message = null;
 
-  // Resolve wallet
-  let wallet = walletId || parsed.wallet;
-  if (!wallet) {
-    const firstWallet = await Wallet.findOne({
-      user: userId,
-      isActive: true,
-    }).sort({
-      createdAt: 1,
-    });
-    if (!firstWallet) {
-      return {
-        success: false,
-        statusCode: 400,
-        message: 'Ban chua co vi de ghi nhan giao dich',
-      };
-    }
-    wallet = firstWallet._id;
+  const numericAmount = Number(draft.amount);
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    needsConfirmation = true;
+    message = 'Can xac nhan so tien truoc khi tao giao dich';
+  } else {
+    draft.amount = numericAmount;
   }
 
   const categoryResolution = await resolveExpenseCategory(
@@ -203,42 +216,37 @@ export async function createTransactionFromText(userId, { text, walletId }) {
     parsed.categoryName,
   );
 
-  if (categoryResolution.needsConfirmation) {
-    return {
-      success: true,
-      statusCode: 200,
-      draft: {
-        ...baseDraft,
-        wallet,
-        suggestedCategory: categoryResolution.suggestion,
-      },
-      needsConfirmation: true,
-      message: 'Can xac nhan danh muc truoc khi tao giao dich',
-    };
+  if (categoryResolution.categoryId) {
+    draft.categoryId = categoryResolution.categoryId;
   }
 
-  const payload = applyCategoryToPayload(
-    {
-      wallet,
-      type: baseDraft.type,
-      amount: baseDraft.amount,
-      currency: baseDraft.currency,
-      occurredAt: baseDraft.occurredAt,
-      description: baseDraft.description,
-      inputMethod: 'manual',
-    },
-    categoryResolution,
-  );
+  if (categoryResolution.needsConfirmation) {
+    needsConfirmation = true;
+    draft.suggestedCategory = categoryResolution.suggestion;
+    message = message || 'Can xac nhan danh muc truoc khi tao giao dich';
+  }
 
-  const result = await transactionService.create(userId, payload);
+  if (confidence !== null && confidence < minConfidence) {
+    needsConfirmation = true;
+    message = message ||
+      'Do tin cay thap, can xac nhan truoc khi tao giao dich';
+  }
 
-  await logAiAudit(userId, 'ai_transaction_created', {
-    source: 'text_parse',
-    payload,
-    transactionId: result?.transaction?._id,
+  await logAiAudit(userId, 'ai_transaction_draft_generated', {
+    text,
+    parsed,
+    draft,
+    confidence,
   });
 
-  return result;
+  return {
+    success: true,
+    statusCode: 200,
+    draft,
+    confidence,
+    needsConfirmation,
+    message,
+  };
 }
 
 export async function createTransactionFromDraft(userId, draft) {
@@ -288,13 +296,14 @@ export async function createTransactionFromDraft(userId, draft) {
 
   const payload = applyCategoryToPayload(
     {
+      walletId: wallet,
       wallet,
       type: type || 'expense',
       amount,
       currency,
       occurredAt: occurredAt || new Date().toISOString(),
       description: description || '',
-      inputMethod: 'manual',
+      inputMethod: 'ai_assisted',
     },
     categoryResolution,
   );
@@ -383,4 +392,4 @@ export async function confirmCategorySuggestion(
   return userCategory;
 }
 
-export default { parseExpense, qa };
+export default { parseExpense, qa, generateTransactionDraftFromText, createTransactionFromDraft, confirmCategorySuggestion };
