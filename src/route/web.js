@@ -102,6 +102,13 @@ let initWebRoutes = (app) => {
 
   // Transactions
   router.post(
+    '/api/v1/transactions',
+    protect,
+    enforceTransactionQuota,
+    transactionController.create,
+  );
+
+  router.post(
     '/api/transactions',
     protect,
     enforceTransactionQuota,
@@ -161,16 +168,10 @@ let initWebRoutes = (app) => {
     aiController.qa,
   );
   router.post(
-    '/api/ai/transactions',
+    '/api/v1/ai/transactions/parse',
     protect,
     rateLimit({ windowMs: 60_000, max: 20 }),
-    aiController.createTransaction,
-  );
-  router.post(
-    '/api/ai/transactions/confirm',
-    protect,
-    rateLimit({ windowMs: 60_000, max: 20 }),
-    aiController.createTransactionFromConfirmedDraft,
+    aiController.parseTransactionDraft,
   );
 
   // Notifications (basic)

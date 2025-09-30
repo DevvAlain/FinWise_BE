@@ -1,4 +1,4 @@
-import aiService, { createTransactionFromText, createTransactionFromDraft } from '../services/aiService.js';
+import aiService from '../services/aiService.js';
 
 const parseExpense = async (req, res) => {
   try {
@@ -28,31 +28,25 @@ const qa = async (req, res) => {
   }
 };
 
-export const createTransaction = async (req, res) => {
+const parseTransactionDraft = async (req, res) => {
   try {
-    const { text, walletId, fromWallet, toWallet } = req.body;
-    if (!text)
-      return res.status(400).json({ success: false, message: 'Thieu text' });
-    const result = await createTransactionFromText(req.user.id, {
+    const { text, walletId } = req.body;
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Thieu text' });
+    }
+
+    const result = await aiService.generateTransactionDraftFromText(req.user.id, {
       text,
       walletId,
-      fromWallet,
-      toWallet,
     });
+
     return res.status(result.statusCode || 200).json(result);
   } catch (e) {
-    console.error('AI createTransaction error:', e);
-    return res.status(500).json({ success: false, message: e.message });
-  }
-};
-export const createTransactionFromConfirmedDraft = async (req, res) => {
-  try {
-    const result = await createTransactionFromDraft(req.user.id, req.body);
-    return res.status(result.statusCode || 200).json(result);
-  } catch (e) {
-    console.error('AI createTransactionFromConfirmedDraft error:', e);
+    console.error('AI parseTransactionDraft error:', e);
     return res.status(500).json({ success: false, message: e.message });
   }
 };
 
-export default { parseExpense, qa, createTransaction, createTransactionFromConfirmedDraft };
+export default { parseExpense, qa, parseTransactionDraft };
