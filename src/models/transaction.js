@@ -44,6 +44,10 @@ const TransactionSchema = new mongoose.Schema(
       enum: ['manual', 'auto_sync', 'import'],
       required: true,
     },
+    provider: { type: String, default: null },
+    providerTransactionId: { type: String, default: null },
+    syncHash: { type: String, default: null },
+    rawProviderMetadata: { type: mongoose.Schema.Types.Mixed, default: null },
     message: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Message',
@@ -57,5 +61,12 @@ const TransactionSchema = new mongoose.Schema(
 TransactionSchema.index({ user: 1, occurredAt: 1 });
 TransactionSchema.index({ category: 1, occurredAt: 1 });
 TransactionSchema.index({ wallet: 1, occurredAt: 1 });
+TransactionSchema.index(
+  { user: 1, syncHash: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { syncHash: { $exists: true, $type: 'string' } },
+  },
+);
 
 module.exports = mongoose.model('Transaction', TransactionSchema);
