@@ -1,4 +1,4 @@
-import express from 'express';
+﻿import express from 'express';
 // import userController from "../controllers/userController";
 import authController from '../controllers/authController';
 import { protect, authorize } from '../middleware/authMiddleware.js';
@@ -64,6 +64,8 @@ let initWebRoutes = (app) => {
   router.get('/api/wallets/:walletId', protect, walletController.detail);
   router.patch('/api/wallets/:walletId', protect, walletController.update);
   router.delete('/api/wallets/:walletId', protect, walletController.remove);
+  router.post('/api/v1/wallets/:walletId/sync', protect, walletController.sync);
+  router.post('/api/wallets/:walletId/sync', protect, walletController.sync);
 
   // Categories
   router.get('/api/categories/system', categoryController.listSystem);
@@ -198,3 +200,5 @@ let initWebRoutes = (app) => {
 };
 
 export default initWebRoutes;
+
+

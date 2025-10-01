@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+﻿import mongoose from 'mongoose';
 import Wallet from '../models/wallet.js';
 import IntegrationConnection from '../models/integration_connection.js';
 import AuditLog from '../models/audit_log.js';
@@ -6,6 +6,7 @@ import Notification from '../models/notification.js';
 import Subscription from '../models/subscription.js';
 import { ensureUsage } from '../middleware/quotaMiddleware.js';
 import integrationJobService from './integrationJobService.js';
+import walletSyncService from './walletSyncService.js';
 
 const WALLET_TYPES = ['bank', 'e-wallet', 'cash', 'credit_card'];
 const DEFAULT_CURRENCY = 'VND';
@@ -341,10 +342,17 @@ const deleteWallet = async (userId, walletId) => {
   return { success: true, statusCode: 200, message: 'Da xoa vi', wallet };
 };
 
+export const requestWalletSync = (userId, walletId, options = {}) =>
+  walletSyncService.requestWalletSync(userId, walletId, options);
+
+export const getWalletSyncJob = walletSyncService.getWalletSyncJob;
+
 export default {
   createWallet,
   listWallets,
   getWallet,
   updateWallet,
   deleteWallet,
+  requestWalletSync,
+  getWalletSyncJob,
 };
