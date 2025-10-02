@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import connectDB from './config/conectDB.js';
 import viewEngine from './config/viewEngine';
 import initWebRoutes from './route/web.js';
+import { initBackgroundJobs } from './jobs/index.js'; // 🆕 ADD MISSING IMPORT
 
 dotenv.config(); // Load biến môi trường từ .env
 
@@ -17,6 +18,9 @@ viewEngine(app);
 initWebRoutes(app);
 
 connectDB(); // Kết nối MongoDB thay vì MySQL
+
+// 🆕 Initialize background jobs after database connection
+initBackgroundJobs();
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
