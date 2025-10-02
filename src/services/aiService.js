@@ -1,26 +1,16 @@
-import { geminiGenerateJSON } from './ai/geminiClient.js';
-import { grokChat } from './ai/openrouterClient.js';
-import ExpenseCategory from '../models/expense_category.js';
-import UserExpenseCategory from '../models/user_expense_category.js';
+import { openRouterChat, classifyExpenseCategory } from './ai/openRouterClient.js';
 import Wallet from '../models/wallet.js';
 import transactionService from './transactionService.js';
-import { mapToCanonicalCategory } from './ai/categoryDictionary.js';
 import AuditLog from '../models/audit_log.js';
+import {
+  resolveCategory,
+  confirmCategorySuggestion as coreConfirmCategorySuggestion,
+} from './categoryResolutionService.js';
 
 const parseSystemPrompt = `You are a finance parser. Extract structured fields from Vietnamese user text about expenses or incomes.
 Return JSON with fields: type ('expense'|'income'|'transfer'), amount(number), currency(string, default 'VND'),
 categoryName(string), occurredAt(ISO string), description(string), confidence(number 0..1).
 If date missing, use now. Do not include extra keys.`;
-
-const normalize = (value) =>
-  value
-    ? value
-        .toString()
-        .trim()
-        .toLowerCase()
-    : '';
-
-const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const logAiAudit = async (userId, action, metadata) => {
   await AuditLog.create({
@@ -30,98 +20,31 @@ const logAiAudit = async (userId, action, metadata) => {
   });
 };
 
-const findSystemCategory = async (normalizedName) => {
-  if (!normalizedName) return null;
-
-  const mapped = mapToCanonicalCategory(normalizedName);
-  const nameToSearch = mapped || normalizedName;
-
-  const regex = new RegExp(`^${escapeRegex(nameToSearch)}$`, 'i');
-  return ExpenseCategory.findOne({
-    $or: [{ name: regex }, { nameEn: regex }],
-  });
-};
-
-const findUserCategory = async (userId, normalizedName) => {
-  if (!normalizedName) return null;
-  return UserExpenseCategory.findOne({
-    user: userId,
-    normalizedName,
-    isActive: true,
-    needsConfirmation: false,
-  }).populate('category');
-};
-
-const upsertCategorySuggestion = async (userId, categoryName, normalizedName) => {
-  if (!normalizedName) return null;
-
-  const suggestion = await UserExpenseCategory.findOneAndUpdate(
-    { user: userId, normalizedName },
-    {
-      $setOnInsert: {
-        customName: categoryName,
-        createdBy: 'ai',
-        needsConfirmation: true,
-        isActive: false,
-      },
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
-  );
-
-  return suggestion;
-};
-
-const resolveExpenseCategory = async (userId, categoryName) => {
-  const normalizedName = normalize(categoryName);
-  if (!normalizedName) {
-    return { categoryId: null, needsConfirmation: false };
-  }
-
-  const userCategory = await findUserCategory(userId, normalizedName);
-  if (userCategory?.category?._id) {
-    return {
-      categoryId: userCategory.category._id,
-      needsConfirmation: false,
-      matchedSource: 'user',
-    };
-  }
-
-  const systemCategory = await findSystemCategory(normalizedName);
-  if (systemCategory?._id) {
-    return {
-      categoryId: systemCategory._id,
-      needsConfirmation: false,
-      matchedSource: 'system',
-    };
-  }
-
-  const suggestion = await upsertCategorySuggestion(
-    userId,
-    categoryName,
-    normalizedName,
-  );
-
-  return {
-    categoryId: null,
-    needsConfirmation: true,
-    suggestion: {
-      id: suggestion?._id,
-      name: categoryName,
-      normalizedName,
-    },
-  };
-};
-
 const parseExpense = async (userId, userText) => {
-  const response = await geminiGenerateJSON(parseSystemPrompt, userText);
+  try {
+    const messages = [
+      { role: 'system', content: parseSystemPrompt },
+      { role: 'user', content: userText }
+    ];
 
-  await logAiAudit(userId, 'ai_parse_transaction', {
-    prompt: parseSystemPrompt,
-    userText,
-    response,
-  });
+    const response = await openRouterChat(messages);
+    const parsedData = JSON.parse(response);
 
-  return response;
+    await logAiAudit(userId, 'ai_parse_transaction', {
+      prompt: parseSystemPrompt,
+      userText,
+      response: parsedData,
+    });
+
+    return parsedData;
+  } catch (error) {
+    console.error('[AI] Parse expense error:', error);
+    await logAiAudit(userId, 'ai_parse_transaction_error', {
+      error: error.message,
+      userText,
+    });
+    throw error;
+  }
 };
 
 const qa = async (userId, question, contextSummary) => {
@@ -135,7 +58,7 @@ const qa = async (userId, question, contextSummary) => {
       content: `${question}\n\nContext:\n${contextSummary || ''}`,
     },
   ];
-  const answer = await grokChat(messages);
+  const answer = await openRouterChat(messages);
 
   await logAiAudit(userId, 'ai_qa', {
     question,
@@ -211,10 +134,9 @@ export async function generateTransactionDraftFromText(userId, { text, walletId 
     draft.amount = numericAmount;
   }
 
-  const categoryResolution = await resolveExpenseCategory(
-    userId,
-    parsed.categoryName,
-  );
+  const categoryResolution = await resolveCategory(userId, {
+    categoryName: parsed.categoryName,
+  });
 
   if (categoryResolution.categoryId) {
     draft.categoryId = categoryResolution.categoryId;
@@ -228,8 +150,8 @@ export async function generateTransactionDraftFromText(userId, { text, walletId 
 
   if (confidence !== null && confidence < minConfidence) {
     needsConfirmation = true;
-    message = message ||
-      'Do tin cay thap, can xac nhan truoc khi tao giao dich';
+    message =
+      message || 'Do tin cay thap, can xac nhan truoc khi tao giao dich';
   }
 
   await logAiAudit(userId, 'ai_transaction_draft_generated', {
@@ -272,7 +194,9 @@ export async function createTransactionFromDraft(userId, draft) {
 
   let categoryResolution = { categoryId: categoryId || null, needsConfirmation: false };
   if (!categoryId && categoryName) {
-    categoryResolution = await resolveExpenseCategory(userId, categoryName);
+    categoryResolution = await resolveCategory(userId, {
+      categoryName,
+    });
   }
 
   if (categoryResolution.needsConfirmation) {
@@ -320,69 +244,11 @@ export async function confirmCategorySuggestion(
   userId,
   { suggestionId, categoryName, systemCategoryId },
 ) {
-  let userCategory;
-
-  if (systemCategoryId) {
-    const systemCategory = await ExpenseCategory.findById(systemCategoryId);
-    if (!systemCategory) {
-      throw new Error('System category not found');
-    }
-    userCategory = await UserExpenseCategory.findOneAndUpdate(
-      { user: userId, category: systemCategoryId },
-      {
-        $set: {
-          customName: categoryName || systemCategory.name,
-          normalizedName: normalize(categoryName || systemCategory.name),
-          needsConfirmation: false,
-          isActive: true,
-          createdBy: 'ai',
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
-  } else {
-    const name = categoryName?.trim();
-    if (!name) throw new Error('Category name is required');
-
-    const normalizedName = normalize(name);
-    const existing = await findSystemCategory(normalizedName);
-    if (existing) {
-      return confirmCategorySuggestion(userId, {
-        suggestionId,
-        categoryName: name,
-        systemCategoryId: existing._id,
-      });
-    }
-
-    const newCategory = await ExpenseCategory.create({
-      name,
-      isSystem: false,
-    });
-
-    userCategory = await UserExpenseCategory.findOneAndUpdate(
-      { user: userId, normalizedName },
-      {
-        $set: {
-          category: newCategory._id,
-          customName: name,
-          needsConfirmation: false,
-          isActive: true,
-          createdBy: 'ai',
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    );
-  }
-
-  if (suggestionId) {
-    await UserExpenseCategory.findByIdAndUpdate(suggestionId, {
-      $set: {
-        category: userCategory.category,
-        needsConfirmation: false,
-        isActive: true,
-      },
-    });
-  }
+  const userCategory = await coreConfirmCategorySuggestion(userId, {
+    suggestionId,
+    categoryName,
+    systemCategoryId,
+  });
 
   await logAiAudit(userId, 'ai_category_confirmed', {
     suggestionId,
@@ -392,4 +258,10 @@ export async function confirmCategorySuggestion(
   return userCategory;
 }
 
-export default { parseExpense, qa, generateTransactionDraftFromText, createTransactionFromDraft, confirmCategorySuggestion };
+export default {
+  parseExpense,
+  qa,
+  generateTransactionDraftFromText,
+  createTransactionFromDraft,
+  confirmCategorySuggestion,
+};

@@ -1,5 +1,10 @@
 import ExpenseCategory from '../models/expense_category.js';
 import UserExpenseCategory from '../models/user_expense_category.js';
+import AuditLog from '../models/audit_log.js'; // 🆕 ADD MISSING IMPORT
+import {
+  confirmCategorySuggestion as coreConfirmCategorySuggestion,
+  listPendingSuggestions,
+} from './categoryResolutionService.js';
 
 // System categories
 const listSystem = async () => {
@@ -11,7 +16,6 @@ const listSystem = async () => {
 
 // My categories = system mapped + user custom
 const listMine = async (userId) => {
-  // Return user mappings (customName) and also system categories as base
   const mappings = await UserExpenseCategory.find({
     user: userId,
     isActive: true,
@@ -27,19 +31,21 @@ const createMine = async (userId, payload) => {
     return {
       success: false,
       statusCode: 400,
-      message: 'Cần categoryId hoặc customName',
+      message: 'Can categoryId hoac customName',
     };
   }
-  // If categoryId provided, ensure it exists
+
   if (categoryId) {
     const base = await ExpenseCategory.findById(categoryId);
-    if (!base)
+    if (!base) {
       return {
         success: false,
         statusCode: 404,
-        message: 'Danh mục hệ thống không tồn tại',
+        message: 'Danh muc he thong khong ton tai',
       };
+    }
   }
+
   try {
     const doc = await UserExpenseCategory.create({
       user: userId,
@@ -50,33 +56,35 @@ const createMine = async (userId, payload) => {
       'category',
     );
     return { success: true, statusCode: 201, item: created };
-  } catch (e) {
-    if (e.code === 11000) {
+  } catch (error) {
+    if (error.code === 11000) {
       return {
         success: false,
         statusCode: 409,
-        message: 'Danh mục đã tồn tại trong bộ sưu tập của bạn',
+        message: 'Danh muc da ton tai trong bo suu tap cua ban',
       };
     }
-    throw e;
+    throw error;
   }
 };
 
 const updateMine = async (userId, id, payload) => {
   const updates = {};
-  if (typeof payload.customName !== 'undefined')
+  if (typeof payload.customName !== 'undefined') {
     updates.customName = payload.customName?.trim();
+  }
   const item = await UserExpenseCategory.findOneAndUpdate(
     { _id: id, user: userId, isActive: true },
     { $set: updates },
     { new: true },
   ).populate('category');
-  if (!item)
+  if (!item) {
     return {
       success: false,
       statusCode: 404,
-      message: 'Không tìm thấy danh mục của bạn',
+      message: 'Khong tim thay danh muc cua ban',
     };
+  }
   return { success: true, statusCode: 200, item };
 };
 
@@ -86,13 +94,88 @@ const deleteMine = async (userId, id) => {
     { $set: { isActive: false } },
     { new: true },
   );
-  if (!item)
+  if (!item) {
     return {
       success: false,
       statusCode: 404,
-      message: 'Không tìm thấy danh mục của bạn',
+      message: 'Khong tim thay danh muc cua ban',
     };
-  return { success: true, statusCode: 200, message: 'Đã xóa danh mục', item };
+  }
+  return { success: true, statusCode: 200, message: 'Da xoa danh muc', item };
 };
 
-export default { listSystem, listMine, createMine, updateMine, deleteMine };
+const listSuggestions = async (userId) => {
+  const items = await listPendingSuggestions(userId);
+  return { success: true, statusCode: 200, items };
+};
+
+const confirmSuggestion = async (userId, id, payload) => {
+  try {
+    const categoryName = payload?.categoryName;
+    const systemCategoryId = payload?.systemCategoryId;
+    const userCategory = await coreConfirmCategorySuggestion(userId, {
+      suggestionId: id,
+      categoryName,
+      systemCategoryId,
+    });
+    return { success: true, statusCode: 200, item: userCategory };
+  } catch (error) {
+    const message = error?.message || 'Failed to confirm suggestion';
+    if (message === 'Suggestion not found') {
+      return { success: false, statusCode: 404, message };
+    }
+    if (message === 'System category not found') {
+      return { success: false, statusCode: 404, message };
+    }
+    if (message === 'Category name is required') {
+      return { success: false, statusCode: 400, message };
+    }
+    throw error;
+  }
+};
+
+// 🆕 ADD MISSING: Reject suggestion function
+const rejectSuggestion = async (userId, id, feedback = null) => {
+  try {
+    const suggestion = await UserExpenseCategory.findOne({
+      _id: id,
+      user: userId,
+      needsConfirmation: true,
+    });
+
+    if (!suggestion) {
+      return { success: false, statusCode: 404, message: 'Suggestion not found' };
+    }
+
+    // Soft delete suggestion
+    await UserExpenseCategory.findByIdAndUpdate(id, {
+      $set: { isActive: false, needsConfirmation: false },
+    });
+
+    // Log audit
+    await AuditLog.create({
+      user: userId,
+      action: 'category_suggestion_rejected',
+      metadata: {
+        suggestionId: id,
+        categoryName: suggestion.customName,
+        feedback,
+      },
+    });
+
+    return { success: true, statusCode: 200, message: 'Suggestion rejected' };
+  } catch (error) {
+    throw error;
+  }
+};
+
+export default {
+  listSystem,
+  listMine,
+  createMine,
+  updateMine,
+  deleteMine,
+  listSuggestions,
+  confirmSuggestion,
+  rejectSuggestion, // 🆕 ADD MISSING EXPORT
+};

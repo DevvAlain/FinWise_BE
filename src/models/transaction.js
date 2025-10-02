@@ -41,7 +41,7 @@ const TransactionSchema = new mongoose.Schema(
     },
     inputMethod: {
       type: String,
-      enum: ['manual', 'auto_sync', 'import'],
+      enum: ['manual', 'auto_sync', 'import', 'ai_assisted'],
       required: true,
     },
     provider: { type: String, default: null },

@@ -81,6 +81,12 @@ let initWebRoutes = (app) => {
     protect,
     categoryController.deleteMine,
   );
+  router.get('/api/categories/suggestions', protect, categoryController.listSuggestions);
+  router.post('/api/v1/categories/suggestions/:suggestionId/confirm', protect, categoryController.confirmSuggestion);
+  router.post('/api/categories/suggestions/:suggestionId/confirm', protect, categoryController.confirmSuggestion);
+  // 🆕 ADD MISSING: Reject suggestion routes
+  router.post('/api/v1/categories/suggestions/:suggestionId/reject', protect, categoryController.rejectSuggestion);
+  router.post('/api/categories/suggestions/:suggestionId/reject', protect, categoryController.rejectSuggestion);
 
   // Admin: System categories
   router.post(
@@ -200,5 +206,3 @@ let initWebRoutes = (app) => {
 };
 
 export default initWebRoutes;
-
-

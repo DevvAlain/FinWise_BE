@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import jwtConfig from '../config/jwtConfig.js';
 import emailService from './emailService.js';
+import { createStarterCategoriesForUser } from './starterCategoryService.js';
+import walletService from './walletService.js';
 
 const register = async (userData, baseUrl) => {
   const { email: rawEmail, password, fullName, phone, avatarUrl } = userData;
@@ -33,6 +35,34 @@ const register = async (userData, baseUrl) => {
   });
 
   await user.save();
+
+  // 🎯 SETUP USER ONBOARDING - Tạo default wallet + starter categories
+  try {
+    // 1. Tạo default wallet
+    console.log(`🎯 Setting up onboarding for new user ${user._id}...`);
+
+    const defaultWalletResult = await walletService.createWallet(user._id, {
+      walletName: 'Ví tiền mặt',
+      walletType: 'cash',
+      currency: 'VND',
+      isDefault: true
+    });
+
+    if (!defaultWalletResult.success) {
+      console.error('Failed to create default wallet:', defaultWalletResult.message);
+    } else {
+      console.log(`✅ Created default wallet for user ${user._id}`);
+    }
+
+    // 2. Tạo starter categories
+    await createStarterCategoriesForUser(user._id);
+    console.log(`✅ Created starter categories for user ${user._id}`);
+
+  } catch (error) {
+    console.error(`❌ Onboarding setup failed for user ${user._id}:`, error);
+    // Không throw error để không block registration
+    // User có thể setup manually sau
+  }
 
   // Send verification email (kept as-is)
   if (baseUrl) {

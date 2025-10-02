@@ -3,6 +3,7 @@ import Transaction from '../models/transaction.js';
 import Wallet from '../models/wallet.js';
 import { ensureUsage } from '../middleware/quotaMiddleware.js';
 import { publishDomainEvents } from '../events/domainEvents.js';
+import { resolveCategory } from './categoryResolutionService.js';
 
 const decimalToNumber = (value) => {
   if (value === null || value === undefined) return 0;
@@ -20,6 +21,7 @@ const create = async (userId, payload) => {
     amount,
     currency = 'VND',
     category,
+    categoryName,
     occurredAt,
     description,
     merchant,
@@ -32,7 +34,7 @@ const create = async (userId, payload) => {
     return {
       success: false,
       statusCode: 400,
-      message: 'Thieu truong bat buoc',
+      message: 'Thiếu trường bắt buộc',
     };
   }
 
@@ -40,7 +42,7 @@ const create = async (userId, payload) => {
     return {
       success: false,
       statusCode: 400,
-      message: 'Loai giao dich khong hop le',
+      message: 'Loại giao dịch không hợp lệ',
     };
   }
 
@@ -49,23 +51,44 @@ const create = async (userId, payload) => {
     return {
       success: false,
       statusCode: 400,
-      message: 'So tien phai lon hon 0',
+      message: 'Số tiền phải lớn hơn 0',
     };
   }
+
+  let categoryResolution = { categoryId: category || null, needsConfirmation: false };
+  if (categoryResolution.categoryId) {
+    categoryResolution = await resolveCategory(userId, {
+      categoryId: categoryResolution.categoryId,
+    });
+    if (!categoryResolution.categoryId) {
+      return {
+        success: false,
+        statusCode: 404,
+        message: 'Không tìm thấy danh mục',
+      };
+    }
+  } else if (categoryName) {
+    categoryResolution = await resolveCategory(userId, { categoryName });
+  }
+
+  const resolvedCategoryId = categoryResolution.categoryId || null;
+  const needsCategoryConfirmation = !!categoryResolution.needsConfirmation;
+  const categorySuggestion = categoryResolution.suggestion || null;
+  const categoryMatchedSource = categoryResolution.matchedSource || null;
 
   if (type === 'transfer') {
     if (!fromWallet || !toWallet) {
       return {
         success: false,
         statusCode: 400,
-        message: 'Chuyen tien can fromWallet va toWallet',
+        message: 'Chuyển tiền cần fromWallet và toWallet',
       };
     }
   } else if (!walletId && !wallet) {
     return {
       success: false,
       statusCode: 400,
-      message: 'Thieu walletId',
+      message: 'Thiếu walletId',
     };
   }
 
@@ -83,40 +106,36 @@ const create = async (userId, payload) => {
 
   try {
     await session.withTransaction(async () => {
-      const primaryWalletId =
-        type === 'transfer' ? fromWallet : walletId || wallet;
+      const primaryWalletId = type === 'transfer' ? fromWallet : walletId || wallet;
 
       const walletDoc = await Wallet.findOne({
         _id: primaryWalletId,
         user: userId,
         isActive: true,
-      })
-        .session(session)
-        .exec();
+      }).session(session).exec();
 
       if (!walletDoc) {
-        fail(404, 'Khong tim thay vi');
+        fail(404, 'Không tìm thấy ví');
       }
 
       let fromWalletDoc = null;
       let toWalletDoc = null;
 
       if (type === 'transfer') {
-        fromWalletDoc = walletDoc;
+        fromWalletDoc = await Wallet.findOne({
+          _id: fromWallet,
+          user: userId,
+          isActive: true,
+        }).session(session).exec();
+
         toWalletDoc = await Wallet.findOne({
           _id: toWallet,
           user: userId,
           isActive: true,
-        })
-          .session(session)
-          .exec();
+        }).session(session).exec();
 
-        if (!toWalletDoc) {
-          fail(404, 'Khong tim thay vi dich');
-        }
-
-        if (String(fromWalletDoc._id) === String(toWalletDoc._id)) {
-          fail(400, 'Vi nguon va vi dich phai khac nhau');
+        if (!fromWalletDoc || !toWalletDoc) {
+          fail(404, 'Không tìm thấy ví chuyển hoặc ví nhận');
         }
       }
 
@@ -127,18 +146,13 @@ const create = async (userId, payload) => {
         ['cash', 'credit_card'].includes(walletDoc.walletType) &&
         currentBalance - numericAmount < 0
       ) {
-        fail(400, 'So du khong du de chi tieu');
+        fail(400, 'Không đủ số dư trong ví');
       }
 
       if (type === 'transfer') {
-        const fromBalance = decimalToNumber(
-          (fromWalletDoc && fromWalletDoc.balance) || 0,
-        );
-        if (
-          ['cash', 'credit_card'].includes(fromWalletDoc.walletType) &&
-          fromBalance - numericAmount < 0
-        ) {
-          fail(400, 'So du vi nguon khong du de chuyen');
+        const fromBalance = decimalToNumber(fromWalletDoc.balance);
+        if (['cash', 'credit_card'].includes(fromWalletDoc.walletType) && fromBalance - numericAmount < 0) {
+          fail(400, 'Không đủ số dư trong ví chuyển');
         }
       }
 
@@ -153,7 +167,7 @@ const create = async (userId, payload) => {
             type,
             amount: numericAmount,
             currency,
-            category: category || null,
+            category: resolvedCategoryId,
             occurredAt,
             description,
             merchant,
@@ -169,43 +183,24 @@ const create = async (userId, payload) => {
 
       if (type === 'income') {
         const newBalance = currentBalance + numericAmount;
-        await Wallet.updateOne(
-          { _id: walletDoc._id },
-          { $inc: { balance: numericAmount } },
-          { session },
-        );
-        updatedBalances[String(walletDoc._id)] = newBalance;
+        await walletDoc.updateOne({ $set: { balance: newBalance } }, { session });
+        updatedBalances[walletDoc._id] = newBalance;
       } else if (type === 'expense') {
         const newBalance = currentBalance - numericAmount;
-        await Wallet.updateOne(
-          { _id: walletDoc._id },
-          { $inc: { balance: -numericAmount } },
-          { session },
-        );
-        updatedBalances[String(walletDoc._id)] = newBalance;
+        await walletDoc.updateOne({ $set: { balance: newBalance } }, { session });
+        updatedBalances[walletDoc._id] = newBalance;
       } else if (type === 'transfer') {
-        const fromBalanceBefore = decimalToNumber(
-          (fromWalletDoc && fromWalletDoc.balance) || 0,
-        );
-        const toBalanceBefore = decimalToNumber(
-          (toWalletDoc && toWalletDoc.balance) || 0,
-        );
+        const fromBalance = decimalToNumber(fromWalletDoc.balance);
+        const toBalance = decimalToNumber(toWalletDoc.balance);
 
-        await Wallet.updateOne(
-          { _id: fromWalletDoc._id },
-          { $inc: { balance: -numericAmount } },
-          { session },
-        );
-        await Wallet.updateOne(
-          { _id: toWalletDoc._id },
-          { $inc: { balance: numericAmount } },
-          { session },
-        );
+        const newFromBalance = fromBalance - numericAmount;
+        const newToBalance = toBalance + numericAmount;
 
-        updatedBalances[String(fromWalletDoc._id)] =
-          fromBalanceBefore - numericAmount;
-        updatedBalances[String(toWalletDoc._id)] =
-          toBalanceBefore + numericAmount;
+        await fromWalletDoc.updateOne({ $set: { balance: newFromBalance } }, { session });
+        await toWalletDoc.updateOne({ $set: { balance: newToBalance } }, { session });
+
+        updatedBalances[fromWalletDoc._id] = newFromBalance;
+        updatedBalances[toWalletDoc._id] = newToBalance;
       }
 
       const baseEventPayload = {
@@ -225,6 +220,18 @@ const create = async (userId, payload) => {
           payload: baseEventPayload,
         },
       );
+
+      if (resolvedCategoryId && !needsCategoryConfirmation) {
+        eventsToPublish.push({
+          name: 'analytics.category_usage',
+          payload: {
+            userId,
+            categoryId: resolvedCategoryId,
+            transactionId: tx._id,
+            source: 'transaction_creation',
+          },
+        });
+      }
     });
   } catch (error) {
     if (session.inTransaction()) {
@@ -241,7 +248,7 @@ const create = async (userId, payload) => {
     return {
       success: false,
       statusCode: 500,
-      message: 'Khong the tao giao dich',
+      message: 'Không thể tạo giao dịch',
     };
   } finally {
     session.endSession();
@@ -262,16 +269,20 @@ const create = async (userId, payload) => {
       statusCode: 201,
       transaction: createdTransaction,
       balances,
+      // Enhanced category resolution metadata theo flow 3.6
+      categoryId: resolvedCategoryId,
+      needsCategoryConfirmation,
+      categorySuggestion,
+      matchedSource: categoryMatchedSource,
     };
   }
 
   return {
     success: false,
     statusCode: 500,
-    message: 'Khong the tao giao dich',
+    message: 'Không thể tạo giao dịch',
   };
 };
-
 
 const list = async (userId, query) => {
   const {
@@ -320,7 +331,7 @@ const detail = async (userId, id) => {
     return {
       success: false,
       statusCode: 404,
-      message: 'Khong tim thay giao dich',
+      message: 'Không tìm thấy giao dịch',
     };
   }
   return { success: true, statusCode: 200, transaction: tx };
@@ -333,12 +344,13 @@ const update = async (userId, id, payload) => {
     user: userId,
     isDeleted: false,
   });
-  if (!originalTx)
+  if (!originalTx) {
     return {
       success: false,
       statusCode: 404,
       message: 'Không tìm thấy giao dịch',
     };
+  }
 
   // Reverse the original transaction's balance impact
   if (originalTx.type === 'income') {
@@ -350,13 +362,11 @@ const update = async (userId, id, payload) => {
       $inc: { balance: parseFloat(originalTx.amount.toString()) },
     });
   } else if (originalTx.type === 'transfer') {
-    // Reverse transfer
-    const transferAmount = parseFloat(originalTx.amount.toString());
     await Wallet.findByIdAndUpdate(originalTx.fromWallet, {
-      $inc: { balance: transferAmount },
+      $inc: { balance: parseFloat(originalTx.amount.toString()) },
     });
     await Wallet.findByIdAndUpdate(originalTx.toWallet, {
-      $inc: { balance: -transferAmount },
+      $inc: { balance: -parseFloat(originalTx.amount.toString()) },
     });
   }
 
@@ -382,12 +392,13 @@ const update = async (userId, id, payload) => {
     { $set: updates },
     { new: true },
   );
-  if (!tx)
+  if (!tx) {
     return {
       success: false,
       statusCode: 404,
       message: 'Không tìm thấy giao dịch',
     };
+  }
 
   // Validate new transaction won't make balance negative for cash/credit_card
   if (tx.type === 'expense') {
@@ -404,30 +415,22 @@ const update = async (userId, id, payload) => {
       const currentBalance = parseFloat((newWallet.balance || 0).toString());
       const newAmt = parseFloat(tx.amount.toString());
       if (currentBalance - newAmt < 0) {
-        // revert reverse operation to keep data consistent
+        // Revert balance change and return error
+        await Wallet.findByIdAndUpdate(tx.wallet, {
+          $inc: { balance: -parseFloat(tx.amount.toString()) },
+        });
         await Wallet.findByIdAndUpdate(originalTx.wallet, {
           $inc: {
             balance:
               originalTx.type === 'income'
                 ? parseFloat(originalTx.amount.toString())
-                : originalTx.type === 'expense'
-                  ? -parseFloat(originalTx.amount.toString())
-                  : 0,
+                : -parseFloat(originalTx.amount.toString()),
           },
         });
-        if (originalTx.type === 'transfer') {
-          const revAmt = parseFloat(originalTx.amount.toString());
-          await Wallet.findByIdAndUpdate(originalTx.fromWallet, {
-            $inc: { balance: -revAmt },
-          });
-          await Wallet.findByIdAndUpdate(originalTx.toWallet, {
-            $inc: { balance: revAmt },
-          });
-        }
         return {
           success: false,
           statusCode: 400,
-          message: 'Số dư không đủ để cập nhật chi tiêu',
+          message: 'Không đủ số dư trong ví',
         };
       }
     }
@@ -437,40 +440,34 @@ const update = async (userId, id, payload) => {
       user: userId,
       isActive: true,
     });
-    if (!fromDoc)
+    if (!fromDoc) {
       return {
         success: false,
         statusCode: 404,
-        message: 'Không tìm thấy ví nguồn',
+        message: 'Không tìm thấy ví chuyển',
       };
+    }
     if (fromDoc.walletType === 'cash' || fromDoc.walletType === 'credit_card') {
-      const currentBalance = parseFloat((fromDoc.balance || 0).toString());
-      const newAmt = parseFloat(tx.amount.toString());
-      if (currentBalance - newAmt < 0) {
-        // revert reverse operation
-        await Wallet.findByIdAndUpdate(originalTx.wallet, {
-          $inc: {
-            balance:
-              originalTx.type === 'income'
-                ? parseFloat(originalTx.amount.toString())
-                : originalTx.type === 'expense'
-                  ? -parseFloat(originalTx.amount.toString())
-                  : 0,
-          },
+      const fromBalance = parseFloat((fromDoc.balance || 0).toString());
+      const transferAmt = parseFloat(tx.amount.toString());
+      if (fromBalance - transferAmt < 0) {
+        // Revert all balance changes
+        await Wallet.findByIdAndUpdate(originalTx.fromWallet, {
+          $inc: { balance: parseFloat(originalTx.amount.toString()) },
         });
-        if (originalTx.type === 'transfer') {
-          const revAmt = parseFloat(originalTx.amount.toString());
-          await Wallet.findByIdAndUpdate(originalTx.fromWallet, {
-            $inc: { balance: -revAmt },
-          });
-          await Wallet.findByIdAndUpdate(originalTx.toWallet, {
-            $inc: { balance: revAmt },
-          });
-        }
+        await Wallet.findByIdAndUpdate(originalTx.toWallet, {
+          $inc: { balance: -parseFloat(originalTx.amount.toString()) },
+        });
+        await Wallet.findByIdAndUpdate(tx.fromWallet, {
+          $inc: { balance: parseFloat(tx.amount.toString()) },
+        });
+        await Wallet.findByIdAndUpdate(tx.toWallet, {
+          $inc: { balance: -parseFloat(tx.amount.toString()) },
+        });
         return {
           success: false,
           statusCode: 400,
-          message: 'Số dư ví nguồn không đủ để cập nhật chuyển khoản',
+          message: 'Không đủ số dư trong ví chuyển',
         };
       }
     }
@@ -486,12 +483,11 @@ const update = async (userId, id, payload) => {
       $inc: { balance: -parseFloat(tx.amount.toString()) },
     });
   } else if (tx.type === 'transfer') {
-    const transferAmount = parseFloat(tx.amount.toString());
     await Wallet.findByIdAndUpdate(tx.fromWallet, {
-      $inc: { balance: -transferAmount },
+      $inc: { balance: -parseFloat(tx.amount.toString()) },
     });
     await Wallet.findByIdAndUpdate(tx.toWallet, {
-      $inc: { balance: transferAmount },
+      $inc: { balance: parseFloat(tx.amount.toString()) },
     });
   }
 
@@ -504,12 +500,13 @@ const remove = async (userId, id) => {
     user: userId,
     isDeleted: false,
   });
-  if (!tx)
+  if (!tx) {
     return {
       success: false,
       statusCode: 404,
       message: 'Không tìm thấy giao dịch',
     };
+  }
 
   // Reverse the transaction's balance impact before soft deleting
   if (tx.type === 'income') {
@@ -521,12 +518,11 @@ const remove = async (userId, id) => {
       $inc: { balance: parseFloat(tx.amount.toString()) },
     });
   } else if (tx.type === 'transfer') {
-    const transferAmount = parseFloat(tx.amount.toString());
     await Wallet.findByIdAndUpdate(tx.fromWallet, {
-      $inc: { balance: transferAmount },
+      $inc: { balance: parseFloat(tx.amount.toString()) },
     });
     await Wallet.findByIdAndUpdate(tx.toWallet, {
-      $inc: { balance: -transferAmount },
+      $inc: { balance: -parseFloat(tx.amount.toString()) },
     });
   }
 
