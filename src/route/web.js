@@ -14,7 +14,7 @@ import {
   enforceSavingGoalQuota,
 } from '../middleware/quotaMiddleware.js';
 import transactionController from '../controllers/transactionController.js';
-import budgetController from '../controllers/budgetController.js';
+import * as budgetController from '../controllers/budgetController.js';
 import savingGoalController from '../controllers/savingGoalController.js';
 import aiController from '../controllers/aiController.js';
 import { rateLimit } from '../middleware/rateLimitMiddleware.js';
@@ -127,40 +127,53 @@ let initWebRoutes = (app) => {
   router.patch('/api/transactions/:id', protect, transactionController.update);
   router.delete('/api/transactions/:id', protect, transactionController.remove);
 
-  // Budgets
+  // Budgets - Enhanced API v1
   router.post(
-    '/api/budgets',
+    '/api/v1/budgets',
     protect,
     enforceBudgetQuota,
     budgetController.create,
   );
+  router.get('/api/v1/budgets', protect, budgetController.list);
+  router.patch('/api/v1/budgets/:id', protect, budgetController.update);
+  router.delete('/api/v1/budgets/:id', protect, budgetController.remove);
+  router.get('/api/v1/budgets/analytics', protect, budgetController.getAnalytics);
+  router.get('/api/v1/budgets/recommendations', protect, budgetController.getRecommendations);
+  // Docs/schema for mobile integration
+  router.get('/api/v1/budgets/recommendations/schema', protect, budgetController.recommendationsSchema);
+  router.get('/api/v1/budgets/:id', protect, budgetController.detail);
+
+  // Legacy support
+  router.post('/api/budgets', protect, enforceBudgetQuota, budgetController.create);
   router.get('/api/budgets', protect, budgetController.list);
   router.get('/api/budgets/:id', protect, budgetController.detail);
   router.patch('/api/budgets/:id', protect, budgetController.update);
   router.delete('/api/budgets/:id', protect, budgetController.remove);
   router.get('/api/budgets/status', protect, budgetController.getStatus);
 
-  // Saving Goals
+  // Saving Goals - Enhanced API v1
   router.post(
-    '/api/goals',
+    '/api/v1/saving-goals',
     protect,
     enforceSavingGoalQuota,
     savingGoalController.create,
   );
+  router.get('/api/v1/saving-goals', protect, savingGoalController.list);
+  // Register static/specific routes before the generic /:id to avoid conflicts
+  router.get('/api/v1/saving-goals/analytics', protect, savingGoalController.getAnalytics);
+  router.post('/api/v1/saving-goals/:id/contributions', protect, savingGoalController.addContribution);
+  router.get('/api/v1/saving-goals/:id', protect, savingGoalController.detail);
+  router.patch('/api/v1/saving-goals/:id', protect, savingGoalController.update);
+  router.delete('/api/v1/saving-goals/:id', protect, savingGoalController.remove);
+
+  // Legacy support
+  router.post('/api/goals', protect, enforceSavingGoalQuota, savingGoalController.create);
   router.get('/api/goals', protect, savingGoalController.list);
   router.get('/api/goals/:id', protect, savingGoalController.detail);
   router.patch('/api/goals/:id', protect, savingGoalController.update);
   router.delete('/api/goals/:id', protect, savingGoalController.remove);
-  router.patch(
-    '/api/goals/:id/progress',
-    protect,
-    savingGoalController.updateProgress,
-  );
-  router.get(
-    '/api/goals/dashboard',
-    protect,
-    savingGoalController.getDashboard,
-  );
+  router.patch('/api/goals/:id/progress', protect, savingGoalController.updateProgress);
+  router.get('/api/goals/dashboard', protect, savingGoalController.getDashboard);
 
   // AI
   router.post(
@@ -180,6 +193,13 @@ let initWebRoutes = (app) => {
     protect,
     rateLimit({ windowMs: 60_000, max: 20 }),
     aiController.parseTransactionDraft,
+  );
+  // 🆕 NEW: Create transaction with wallet selection
+  router.post(
+    '/api/v1/ai/transactions/create-with-wallet',
+    protect,
+    rateLimit({ windowMs: 60_000, max: 15 }),
+    aiController.createTransactionWithWallet,
   );
 
   // Notifications (basic)

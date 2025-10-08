@@ -164,7 +164,15 @@ const forgotPassword = async (req, res) => {
 const resetPassword = async (req, res) => {
   try {
     const { token } = req.params;
-    const { password } = req.body;
+    // Accept multiple possible payload shapes from different clients
+    let password = null;
+    if (req.body) {
+      password = req.body.password || req.body.newPassword || req.body.pass || (req.body.data && req.body.data.password) || null;
+    }
+
+    if (!password) {
+      return res.status(400).json({ success: false, message: 'Password is required' });
+    }
 
     const result = await authService.resetPasswordWithToken(token, password);
 

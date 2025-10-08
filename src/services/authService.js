@@ -303,8 +303,22 @@ const forgotPassword = async (email, baseUrl) => {
 // Thực hiện reset password
 const resetPasswordWithToken = async (token, newPassword) => {
   try {
+    // Normalize incoming password: some clients may send { password: '...' } or numbers
+    if (newPassword && typeof newPassword === 'object' && 'password' in newPassword) {
+      newPassword = newPassword.password;
+    }
+
+    // Coerce to string for consistent validation (e.g., numbers)
+    if (newPassword !== undefined && newPassword !== null && typeof newPassword !== 'string') {
+      newPassword = String(newPassword);
+    }
+
+    // Trim whitespace
+    if (typeof newPassword === 'string') newPassword = newPassword.trim();
+
     // Kiểm tra độ mạnh của mật khẩu (tùy chọn)
-    if (newPassword.length < 6) {
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      console.debug('resetPasswordWithToken: invalid newPassword:', { type: typeof newPassword, length: newPassword ? newPassword.length : 0 });
       return {
         success: false,
         statusCode: 400,
@@ -335,7 +349,8 @@ const changePassword = async (userId, oldPassword, newPassword) => {
       };
     }
 
-    if (newPassword.length < 6) {
+    // Validate newPassword type and length to avoid runtime errors
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
       return {
         success: false,
         statusCode: 400,

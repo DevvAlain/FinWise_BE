@@ -30,7 +30,7 @@ const findSystemCategory = async (normalizedName) => {
     };
   }
 
-  // Fallback 1: OpenRouter AI classification  
+  // Fallback 1: DeepSeek AI classification via OpenRouter
   try {
     const aiResult = await classifyExpenseCategory(normalizedName);
     if (aiResult && aiResult.category && aiResult.confidence > 0) {
@@ -45,12 +45,12 @@ const findSystemCategory = async (normalizedName) => {
         return {
           category,
           confidence: aiResult.confidence,
-          matchType: 'openrouter_ai'
+          matchType: 'deepseek_ai'
         };
       }
     }
   } catch (error) {
-    console.warn('[CategoryResolution] OpenRouter AI classification failed:', error.message);
+    console.warn('[CategoryResolution] DeepSeek AI classification failed:', error.message);
   }
 
   // Fallback 2: AI dictionary mapping
@@ -87,14 +87,14 @@ const findUserCategory = async (userId, normalizedName) => {
 const shouldAutoAssign = (confidence, matchType) => {
   // Auto-assign rules:
   // 1. Exact match với starter categories → Always auto-assign
-  // 2. OpenRouter AI với high confidence (>= 0.8) → Auto-assign
+  // 2. DeepSeek AI với high confidence (>= 0.8) → Auto-assign
   // 3. High confidence (>= 0.8) → Auto-assign
   // 4. Medium confidence (0.6-0.8) và exact/fuzzy match → Auto-assign
   // 5. Low confidence (< 0.6) → Require confirmation
 
   if (matchType === 'exact' && confidence >= 0.8) return true;
   if (matchType === 'fuzzy' && confidence >= 0.7) return true;
-  if (matchType === 'openrouter_ai' && confidence >= 0.8) return true;
+  if (matchType === 'deepseek_ai' && confidence >= 0.8) return true;
   if (matchType === 'ai_mapped' && confidence >= 0.8) return true;
 
   return false;
@@ -105,14 +105,38 @@ const autoCreateUserCategory = async (userId, systemCategory, categoryName, conf
   try {
     const normalizedName = normalize(categoryName);
 
-    const userCategory = await UserExpenseCategory.create({
+    // 🛡️ Check if mapping already exists
+    let userCategory = await UserExpenseCategory.findOne({
+      user: userId,
+      category: systemCategory._id
+    });
+
+    if (userCategory) {
+      // Update existing mapping if needed
+      if (userCategory.customName !== categoryName || !userCategory.isActive) {
+        userCategory.customName = categoryName;
+        userCategory.normalizedName = normalizedName;
+        userCategory.isActive = true;
+        userCategory.needsConfirmation = false;
+        if (!userCategory.metadata) userCategory.metadata = {};
+        userCategory.metadata.confidence = confidence;
+        userCategory.metadata.matchType = matchType;
+        userCategory.metadata.autoAssigned = true;
+        userCategory.metadata.originalInput = categoryName;
+        await userCategory.save();
+      }
+      return userCategory;
+    }
+
+    // Create new mapping
+    userCategory = await UserExpenseCategory.create({
       user: userId,
       category: systemCategory._id,
       customName: categoryName,
       normalizedName,
       needsConfirmation: false,  // 🎯 AUTO-ASSIGNED
       isActive: true,
-      createdBy: 'auto_ai',
+      createdBy: 'ai',
       metadata: {
         confidence,
         matchType,

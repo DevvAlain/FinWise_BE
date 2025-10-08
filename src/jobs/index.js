@@ -1,4 +1,6 @@
 import { initCategoryJobs } from './categoryJobs.js';
+import { initBudgetJobs } from './budgetJobs.js';
+import { initGoalJobs } from './goalJobs.js';
 
 /**
  * Initialize all background jobs
@@ -9,6 +11,12 @@ export const initBackgroundJobs = () => {
     try {
         // Initialize category-related jobs
         initCategoryJobs();
+
+        // 🆕 Initialize budget-related jobs
+        initBudgetJobs();
+
+        // 🆕 Initialize saving goal-related jobs
+        initGoalJobs();
 
         // TODO: Add other job types here
         // initPaymentJobs();
