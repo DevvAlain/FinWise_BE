@@ -18,6 +18,60 @@ export const create = async (req, res) => {
   }
 };
 
+// 🆕 NEW: Add contribution to saving goal
+export const addContribution = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    // Normalize incoming payloads: accept multiple date field names and nested shapes
+    let { amount, note, walletId, occurredAt } = req.body;
+    // common variants
+    occurredAt = occurredAt || req.body.occurred_at || req.body.contributedAt || req.body.contributed_at || (req.body.contribution && (req.body.contribution.occurredAt || req.body.contribution.occurred_at || req.body.contribution.contributedAt));
+
+    const contributionPayload = {
+      amount,
+      note,
+      walletId,
+      occurredAt,
+    };
+
+    const result = await savingGoalService.addContribution(userId, id, contributionPayload);
+
+    res.status(201).json({
+      success: true,
+      message: 'Đóng góp thành công',
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// 📊 NEW: Get saving goals analytics
+export const getAnalytics = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { includeProjections } = req.query;
+
+    const analytics = await savingGoalService.getGoalAnalytics(userId, {
+      includeProjections: includeProjections === 'true'
+    });
+
+    res.json({
+      success: true,
+      data: analytics,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 export const list = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -144,6 +198,8 @@ export const getDashboard = async (req, res) => {
 // Default export for backward compatibility
 export default {
   create,
+  addContribution,
+  getAnalytics,
   list,
   detail,
   update,

@@ -49,4 +49,41 @@ const parseTransactionDraft = async (req, res) => {
   }
 };
 
-export default { parseExpense, qa, parseTransactionDraft };
+// 🆕 NEW: Create transaction with wallet selection
+const createTransactionWithWallet = async (req, res) => {
+  try {
+    const { walletId, transactionData } = req.body;
+
+    if (!walletId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui long chon vi'
+      });
+    }
+
+    if (!transactionData) {
+      return res.status(400).json({
+        success: false,
+        message: 'Thieu thong tin giao dich'
+      });
+    }
+
+    // Create transaction with selected wallet
+    const result = await aiService.createTransactionFromParsedData(req.user.id, {
+      ...transactionData,
+      walletId,
+    });
+
+    return res.status(result.statusCode || 201).json(result);
+  } catch (e) {
+    console.error('AI createTransactionWithWallet error:', e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+export default {
+  parseExpense,
+  qa,
+  parseTransactionDraft,
+  createTransactionWithWallet
+};

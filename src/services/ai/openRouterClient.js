@@ -1,16 +1,16 @@
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'x-ai/grok-4-fast:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat-v3.1:free';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE = process.env.OPENROUTER_SITE || 'http://localhost';
 const OPENROUTER_TITLE = process.env.OPENROUTER_TITLE || 'BE_NVIDIA';
 
 if (!OPENROUTER_API_KEY) {
   console.warn(
-    '[OpenRouter] Missing OPENROUTER_API_KEY env; AI features will fail.',
+    '[OpenRouter/DeepSeek] Missing OPENROUTER_API_KEY env; AI features will fail.',
   );
 }
 
-// Generic chat function
+// Generic chat function using DeepSeek via OpenRouter
 export async function openRouterChat(messages, model = OPENROUTER_MODEL) {
   try {
     const res = await fetch(OPENROUTER_API_URL, {
@@ -31,19 +31,19 @@ export async function openRouterChat(messages, model = OPENROUTER_MODEL) {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`[OpenRouter] HTTP ${res.status}: ${err}`);
+      throw new Error(`[OpenRouter/DeepSeek] HTTP ${res.status}: ${err}`);
     }
 
     const data = await res.json();
     const content = data?.choices?.[0]?.message?.content || '';
     return content;
   } catch (error) {
-    console.error('[OpenRouter] Chat error:', error);
+    console.error('[OpenRouter/DeepSeek] Chat error:', error);
     throw error;
   }
 }
 
-// Specific function for category classification
+// Specific function for category classification using DeepSeek
 export async function classifyExpenseCategory(transactionDescription) {
   const categories = [
     'Ăn uống', 'Mua sắm', 'Di chuyển', 'Giải trí',
@@ -56,6 +56,7 @@ export async function classifyExpenseCategory(transactionDescription) {
       content: `Bạn là AI chuyên phân loại chi tiêu. Hãy phân loại giao dịch vào 1 trong ${categories.length} danh mục sau: ${categories.join(', ')}.
       
 Chỉ trả về tên danh mục và độ tin cậy (0-1), format: "Danh_mục|0.85"
+Không sử dụng markdown hoặc code blocks, chỉ trả về text thuần.
 
 Ví dụ:
 - "Mua cà phê" → "Ăn uống|0.9"
@@ -86,10 +87,10 @@ Ví dụ:
     return { category: null, confidence: 0 };
 
   } catch (error) {
-    console.error('[OpenRouter] Category classification error:', error);
+    console.error('[OpenRouter/DeepSeek] Category classification error:', error);
     return { category: null, confidence: 0 };
   }
 }
 
 // Legacy function for backward compatibility
-export const grokChat = openRouterChat;
+export const deepSeekChat = openRouterChat;

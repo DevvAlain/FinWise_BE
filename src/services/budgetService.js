@@ -3,6 +3,292 @@ import Transaction from '../models/transaction.js';
 import QuotaUsage from '../models/quota_usage.js';
 import Subscription from '../models/subscription.js';
 import SubscriptionPlan from '../models/subscription_plan.js';
+import { publishDomainEvents } from '../events/domainEvents.js';
+
+// 🔥 NEW: AI-powered recommendation service
+const getHistoricalSpendingData = async (userId, categoryId, period, months = 12) => {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setMonth(endDate.getMonth() - months);
+
+  const query = {
+    user: userId,
+    type: 'expense',
+    occurredAt: { $gte: startDate, $lte: endDate },
+    isDeleted: false,
+  };
+
+  if (categoryId) {
+    query.category = categoryId;
+  }
+
+  const transactions = await Transaction.aggregate([
+    { $match: query },
+    {
+      $group: {
+        _id: {
+          year: { $year: '$occurredAt' },
+          month: { $month: '$occurredAt' },
+          ...(period === 'weekly' && { week: { $week: '$occurredAt' } }),
+        },
+        totalAmount: { $sum: { $toDouble: '$amount' } },
+        transactionCount: { $sum: 1 },
+      },
+    },
+    { $sort: { '_id.year': 1, '_id.month': 1 } },
+  ]);
+
+  return transactions;
+};
+
+const detectSeasonalPatterns = (historicalData) => {
+  const monthlyAverages = {};
+  const monthlyTotals = {};
+
+  historicalData.forEach(item => {
+    const month = item._id.month;
+    if (!monthlyTotals[month]) {
+      monthlyTotals[month] = { total: 0, count: 0 };
+    }
+    monthlyTotals[month].total += item.totalAmount;
+    monthlyTotals[month].count += 1;
+  });
+
+  Object.keys(monthlyTotals).forEach(month => {
+    monthlyAverages[month] = monthlyTotals[month].total / monthlyTotals[month].count;
+  });
+
+  const currentMonth = new Date().getMonth() + 1;
+  const seasonalMultiplier = monthlyAverages[currentMonth]
+    ? monthlyAverages[currentMonth] / (Object.values(monthlyAverages).reduce((a, b) => a + b, 0) / Object.keys(monthlyAverages).length)
+    : 1;
+
+  return {
+    monthlyAverages,
+    seasonalMultiplier,
+    hasSeasonalPattern: Math.abs(seasonalMultiplier - 1) > 0.2,
+  };
+};
+
+// 🚀 Enhanced AI Recommendations
+export const getAIRecommendations = async (userId, budgetData) => {
+  try {
+    const { category, period = 'monthly', includeSeasonality = true } = budgetData;
+
+    // Get historical spending data
+    const historicalData = await getHistoricalSpendingData(userId, category, period);
+
+    if (historicalData.length === 0) {
+      const fallbackAmount = period === 'monthly' ? 1000000 : 500000; // VND
+      const recommendedAmount = fallbackAmount;
+      const confidence = 'low';
+      const reasoning = 'Không đủ dữ liệu lịch sử để đưa ra gợi ý chính xác; đang trả về giá trị mặc định để giúp bạn bắt đầu';
+
+      return {
+        recommendedAmount,
+        confidence,
+        insufficientData: true,
+        reasoning,
+        fallbackAmount,
+        dataPoints: 0,
+        // UI friendly fields for mobile
+        ui: {
+          amountFormatted: `${recommendedAmount.toLocaleString('vi-VN')} VND`,
+          shortMessage: 'Chưa có đủ dữ liệu — gợi ý mặc định',
+          confidenceBadge: 'Tin cậy thấp',
+        },
+      };
+    }
+
+    // Calculate average spending
+    const totalSpent = historicalData.reduce((sum, item) => sum + item.totalAmount, 0);
+    const averageSpending = totalSpent / historicalData.length;
+
+    // Seasonal adjustment
+    let recommendedAmount = averageSpending;
+    let seasonalInfo = null;
+
+    if (includeSeasonality && period === 'monthly') {
+      seasonalInfo = detectSeasonalPatterns(historicalData);
+      if (seasonalInfo.hasSeasonalPattern) {
+        recommendedAmount = averageSpending * seasonalInfo.seasonalMultiplier;
+      }
+    }
+
+    // Add 10% buffer for safety
+    const safeRecommendedAmount = Math.round(recommendedAmount * 1.1);
+
+    // Determine confidence based on data quality
+    // Use period-aware thresholds so weekly/monthly recommendations behave sensibly
+    let highThreshold;
+    let mediumThreshold;
+    if (period === 'weekly') {
+      // For weekly: high ~ 3 months => 12 weeks, medium ~ 1 month => 4 weeks
+      highThreshold = 12;
+      mediumThreshold = 4;
+    } else {
+      // Default (monthly): high = 3 months, medium = 1 month
+      highThreshold = 3;
+      mediumThreshold = 1;
+    }
+
+    // Basic transactions-per-period quality check
+    const totalTransactions = historicalData.reduce((sum, item) => sum + (item.transactionCount || 0), 0);
+    const avgTxPerPeriod = historicalData.length > 0 ? totalTransactions / historicalData.length : 0;
+
+    // If average transactions per period is very low, mark confidence down a notch
+    let confidence = historicalData.length >= highThreshold ? 'high' :
+      historicalData.length >= mediumThreshold ? 'medium' : 'low';
+
+    if (avgTxPerPeriod < 1 && confidence !== 'low') {
+      // Not enough transactions per period to fully trust even if there are many periods
+      confidence = 'medium';
+    }
+
+    const result = {
+      recommendedAmount: safeRecommendedAmount,
+      baseAmount: Math.round(averageSpending),
+      confidence,
+      dataPoints: historicalData.length,
+      seasonalInfo,
+      reasoning: `Dựa trên ${historicalData.length} tháng dữ liệu, chi tiêu trung bình là ${Math.round(averageSpending).toLocaleString('vi-VN')} VND${seasonalInfo?.hasSeasonalPattern ? ', đã điều chỉnh theo xu hướng theo mùa' : ''}`,
+      // UI friendly payload for frontend/mobile
+      ui: {
+        amountFormatted: `${Math.round(safeRecommendedAmount).toLocaleString('vi-VN')} VND`,
+        shortMessage: confidence === 'high' ? 'Gợi ý dựa trên dữ liệu lịch sử' : 'Gợi ý sơ bộ (đã điều chỉnh)',
+        confidenceBadge: confidence === 'high' ? 'Tin cậy cao' : confidence === 'medium' ? 'Tin cậy trung bình' : 'Tin cậy thấp',
+      },
+    };
+
+    return result;
+  } catch (error) {
+    console.error('Error getting AI recommendations:', error);
+    return {
+      recommendedAmount: null,
+      confidence: 'low',
+      reasoning: 'Có lỗi khi phân tích dữ liệu',
+    };
+  }
+};
+
+// 📊 Enhanced Budget Analytics
+export const getBudgetAnalytics = async (userId, options = {}) => {
+  try {
+    const { period = 'monthly', includeForecasting = false } = options;
+
+    // Get all user budgets
+    const budgets = await Budget.find({
+      user: userId,
+      isActive: true
+    }).populate('category wallet');
+
+    // Calculate current status for each budget
+    const budgetStatuses = [];
+    let totalBudgeted = 0;
+    let totalSpent = 0;
+
+    for (const budget of budgets) {
+      const spentAmount = await calculateSpentAmount(budget);
+      const budgetAmount = parseFloat(budget.amount.toString());
+      const percentage = (spentAmount / budgetAmount) * 100;
+
+      totalBudgeted += budgetAmount;
+      totalSpent += spentAmount;
+
+      budgetStatuses.push({
+        budgetId: budget._id,
+        category: budget.category?.customName || 'Tất cả danh mục',
+        budgeted: budgetAmount,
+        spent: spentAmount,
+        remaining: Math.max(0, budgetAmount - spentAmount),
+        percentage: Math.round(percentage),
+        status: percentage >= 100 ? 'exceeded' :
+          percentage >= 95 ? 'critical' :
+            percentage >= 80 ? 'warning' :
+              percentage >= 50 ? 'caution' : 'on_track',
+        period: budget.period,
+        periodStart: budget.periodStart,
+        periodEnd: budget.periodEnd,
+      });
+    }
+
+    // Generate insights
+    const insights = [];
+    const exceededBudgets = budgetStatuses.filter(b => b.status === 'exceeded');
+    const criticalBudgets = budgetStatuses.filter(b => b.status === 'critical');
+
+    if (exceededBudgets.length > 0) {
+      insights.push({
+        type: 'alert',
+        message: `${exceededBudgets.length} ngân sách đã vượt mức cho phép`,
+        action: 'Cần xem xét điều chỉnh chi tiêu hoặc tăng ngân sách',
+      });
+    }
+
+    if (criticalBudgets.length > 0) {
+      insights.push({
+        type: 'warning',
+        message: `${criticalBudgets.length} ngân sách sắp vượt mức (>95%)`,
+        action: 'Hãy cẩn thận với chi tiêu trong thời gian còn lại',
+      });
+    }
+
+    const result = {
+      summary: {
+        totalBudgets: budgets.length,
+        totalBudgeted,
+        totalSpent,
+        totalRemaining: totalBudgeted - totalSpent,
+        overallPercentage: totalBudgeted > 0 ? Math.round((totalSpent / totalBudgeted) * 100) : 0,
+      },
+      budgetStatuses,
+      insights,
+      period,
+      lastUpdated: new Date(),
+    };
+
+    // Add forecasting if requested
+    if (includeForecasting) {
+      const forecasting = await generateSpendingForecast(userId, budgetStatuses);
+      result.forecasting = forecasting;
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error getting budget analytics:', error);
+    throw error;
+  }
+};
+
+// 🔮 Spending Forecast
+const generateSpendingForecast = async (userId, budgetStatuses) => {
+  const forecasts = [];
+
+  for (const budget of budgetStatuses) {
+    const daysElapsed = Math.floor((new Date() - new Date(budget.periodStart)) / (1000 * 60 * 60 * 24));
+    const totalDays = Math.floor((new Date(budget.periodEnd) - new Date(budget.periodStart)) / (1000 * 60 * 60 * 24));
+    const daysRemaining = totalDays - daysElapsed;
+
+    if (daysRemaining > 0 && daysElapsed > 0) {
+      const dailySpendRate = budget.spent / daysElapsed;
+      const projectedTotalSpent = budget.spent + (dailySpendRate * daysRemaining);
+      const projectedOverspend = Math.max(0, projectedTotalSpent - budget.budgeted);
+
+      forecasts.push({
+        budgetId: budget.budgetId,
+        category: budget.category,
+        projectedTotalSpent: Math.round(projectedTotalSpent),
+        projectedOverspend: Math.round(projectedOverspend),
+        daysRemaining,
+        dailySpendRate: Math.round(dailySpendRate),
+        willExceed: projectedTotalSpent > budget.budgeted,
+        confidence: daysElapsed >= 7 ? 'high' : 'medium',
+      });
+    }
+  }
+
+  return forecasts;
+};
 
 const getPeriodDates = (period, startDate = new Date()) => {
   const date = new Date(startDate);

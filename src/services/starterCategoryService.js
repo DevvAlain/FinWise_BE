@@ -108,16 +108,23 @@ export const createStarterCategoriesForUser = async (userId) => {
                 });
             }
 
-            // Tạo user mapping cho category này
-            const userCategory = await UserExpenseCategory.create({
+            // Tạo user mapping cho category này (check duplicate first)
+            let userCategory = await UserExpenseCategory.findOne({
                 user: userId,
-                category: systemCategory._id,
-                customName: categoryData.name,
-                normalizedName: categoryData.name.toLowerCase(),
-                needsConfirmation: false,
-                isActive: true,
-                createdBy: 'system'
+                category: systemCategory._id
             });
+
+            if (!userCategory) {
+                userCategory = await UserExpenseCategory.create({
+                    user: userId,
+                    category: systemCategory._id,
+                    customName: categoryData.name,
+                    normalizedName: categoryData.name.toLowerCase(),
+                    needsConfirmation: false,
+                    isActive: true,
+                    createdBy: 'system'
+                });
+            }
 
             createdCategories.push({
                 systemCategory,
