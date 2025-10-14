@@ -7,6 +7,9 @@ import userProfileController from '../controllers/userProfileController.js';
 import walletController from '../controllers/walletController.js';
 import categoryController from '../controllers/categoryController.js';
 import categoryAdminController from '../controllers/categoryAdminController.js';
+import subscriptionBillingController from '../controllers/subscriptionBillingController.js';
+import adminController from '../controllers/adminController.js';
+import paymentController from '../controllers/paymentController.js';
 import {
   enforceWalletQuota,
   enforceTransactionQuota,
@@ -108,6 +111,51 @@ let initWebRoutes = (app) => {
     categoryAdminController.remove,
   );
 
+  // Admin: Metrics dashboard
+  router.get(
+    '/api/v1/admin/metrics/overview',
+    protect,
+    authorize('admin'),
+    adminController.getMetricsOverview,
+  );
+
+  // Admin: Subscription plans
+  router.post(
+    '/api/v1/admin/plans',
+    protect,
+    authorize('admin'),
+    adminController.createPlan,
+  );
+  router.put(
+    '/api/v1/admin/plans/:planId',
+    protect,
+    authorize('admin'),
+    adminController.updatePlan,
+  );
+
+  // Admin: Sync logs monitoring
+  router.get(
+    '/api/v1/admin/sync-logs',
+    protect,
+    authorize('admin'),
+    adminController.listSyncLogs,
+  );
+
+  // Subscription billing
+  router.post(
+    '/api/v1/subscriptions/checkout',
+    protect,
+    subscriptionBillingController.checkout,
+  );
+  router.post(
+    '/api/v1/subscriptions/checkout/cancel',
+    protect,
+    subscriptionBillingController.cancel,
+  );
+
+  // Payment provider webhooks
+  router.post('/api/v1/payments/webhook/:provider', paymentController.handleWebhook);
+
   // Transactions
   router.post(
     '/api/v1/transactions',
@@ -181,6 +229,12 @@ let initWebRoutes = (app) => {
     protect,
     rateLimit({ windowMs: 60_000, max: 30 }),
     aiController.parseExpense,
+  );
+  router.post(
+    '/api/v1/ai/chat',
+    protect,
+    rateLimit({ windowMs: 60 * 60 * 1000, max: 20 }),
+    aiController.chat,
   );
   router.post(
     '/api/ai/qa',

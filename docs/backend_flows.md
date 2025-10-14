@@ -240,9 +240,13 @@
 
 1. **Enhanced Checkout**: `POST /api/v1/subscriptions/checkout`
    - **Security Layer**: Fraud detection, user verification, payment amount validation
-   - **Smart Routing**: Provider selection based on success rates, fees, availability
+   - **Provider**: PayOS duy nhất (QR/payment link)
    - **Enhanced PaymentIntent**: Secure requestId, expiry (15 min), metadata encryption
-   - **Response**: 202 + secure paymentUrl + timeout info + fallback options
+   - **Payload**: `{ planId, returnUrl?, cancelUrl? }`
+   - **Cancel Flow**: `POST /api/v1/subscriptions/checkout/cancel` cập nhật trạng thái khi user hủy trước khi PayOS gửi webhook
+   - **Validation**: Block inactive users/plans, reuse active intent để tránh tạo lại
+   - **Response**: 202 + secure `paymentUrl` + `requestId` + TTL
+   - **Provider Integration**: PayOS (`PAYOS_*` env) với payload ký HMAC + metadata AES-256-GCM
 
 2. **Robust Webhook Processing**: `POST /api/v1/payments/webhook/{provider}`
    - **Enhanced Security**:
@@ -253,8 +257,8 @@
      ├── Payload size limits (1MB max)
      └── Rate limiting per provider
      ```
-   - **Idempotency Protection**: Webhook ID deduplication, replay attack prevention
-   - **Queue Job**: `payment.webhook_secure` với enhanced processing
+   - **Idempotency Protection**: Webhook ID deduplication, replay attack prevention (collection `PaymentWebhookEvent`)
+   - **Queue Job**: `payment.webhook_secure` -> persisted event + async worker
 
 3. **Enhanced Webhook Worker**:
    - **Security Validation**: Re-verify signature, check payment amount consistency
@@ -270,10 +274,10 @@
    - **Enhanced Events**: `payment.verified`, `subscription.activated`, `billing.cycle_started`
 
 4. **Advanced Reconciliation**: `payment.reconcile` (Every 5 minutes)
-   - **Proactive Monitoring**: Check pending payments, detect stuck transactions
-   - **Auto-recovery**: Retry failed webhooks, manual intervention alerts
+   - **Proactive Monitoring**: Check pending payments, detect stuck transactions & locked webhooks
+   - **Auto-recovery**: Retry failed webhooks, manual intervention alerts (`PaymentWebhookEvent` reset)
    - **Fraud Detection**: Unusual payment patterns, repeated failures
-   - **Customer Support**: Auto-create support tickets cho failed payments
+   - **Customer Support**: Auto-create support tickets cho failed payments (event `payment.failed`)
 
 5. **Smart Auto-renewal** (3 days before expiry):
    - **Payment Method Validation**: Verify active payment methods
@@ -285,52 +289,42 @@
    - **Real-time Dashboards**: Payment success rates, provider performance
    - **Alerting System**: Failed payments, webhook delays, fraud detection
    - **Business Metrics**: MRR, churn rate, payment method distribution
+   - **Jobs**: `payment-webhook-secure-processor (1m)`, `payment-reconciliation (5m)`, `subscription-auto-renewal (03:00)`
 
 ### 3.10 AI chat va goi y insight (Cải tiến AI context)
 
-1. **Enhanced AI Request**: `POST /api/v1/ai/chat` với conversationId, question
-2. **Advanced Validation & Security**:
-   - **User Quota**: Real-time quota check với predictive warnings
-   - **Rate Limiting**: 20 requests/hour với burst allowance
-   - **Content Filtering**: Inappropriate content detection, financial advice compliance
-   - **Context Limits**: Max conversation history, token limits per request
-3. **Smart Context Building** (AI Orchestrator):
-   - **Financial Data Aggregation**:
-     ```
-     ├── Recent transaction patterns (30 days)
-     ├── Active budgets & current status
-     ├── Saving goals progress
-     ├── Spending category breakdowns
-     ├── Monthly/seasonal trends
-     └── Previous conversation context
-     ```
-   - **Personalization**: User preferences, financial goals, risk tolerance
-   - **Market Context**: Current economic indicators, seasonal spending patterns
-4. **Enhanced AI Processing**:
-   - **Multi-model Routing**: GPT-4 cho complex analysis, Gemini cho quick responses
-   - **Intent Classification**: Question categorization (budgeting, analysis, advice, etc.)
-   - **Response Quality**: Relevance scoring, financial accuracy validation
-   - **Safety Checks**: Financial advice disclaimers, risk warnings
-5. **Intelligent Response Enhancement**:
-   - **Actionable Recommendations**: Specific steps user có thể implement
-   - **Data Visualizations**: Chart suggestions, spending breakdowns
-   - **Follow-up Prompts**: Related questions to explore deeper
-   - **Feature Integration**: Direct links to create budgets, set goals
-6. **Advanced Events & Learning**:
-   - `ai.query_processed` với intent classification
-   - `recommendation.generated` với confidence scores
-   - `user.engagement_tracked` cho AI improvement
-   - `ai.feedback_collected` cho model fine-tuning
-7. **Response Format**:
+1. **Enhanced AI Request**: `POST /api/v1/ai/chat`
+   - Body: `question` (bắt buộc), `conversationId` (optional → server tự sinh nếu thiếu)
+   - Hội thoại lưu trong Mongo `ai_conversations`, giới hạn 10 lượt trao đổi gần nhất để kiểm soát token
+2. **Advanced Validation & Security**
+   - **Quota**: Sử dụng `quota_usage` + `aiRecommendationsLimit` của plan, cảnh báo khi vượt 80%, chặn khi hết lượt
+   - **Rate limit**: `rateLimit({ windowMs: 1 giờ, max: 20 })`
+   - **Content filter**: chặn từ khóa độc hại/phi pháp trước khi gọi LLM
+   - **Context limit**: cắt lịch sử, giới hạn 600 tokens khi gọi OpenRouter
+3. **Smart Context Building (AI Orchestrator)**
+   - Tổng hợp 30 ngày dữ liệu: giao dịch mới nhất, breakdown danh mục, xu hướng tháng, ngân sách và mục tiêu tiết kiệm đang hoạt động
+   - Thêm thông tin người dùng (ngôn ngữ, timezone) và ghi chú mùa vụ chi tiêu vào prompt
+4. **Enhanced AI Processing**
+   - Phân loại intent (budgeting/analysis/saving_goal/investment/general), đánh giá độ phức tạp câu hỏi
+   - Định tuyến model: `OPENROUTER_MODEL_FAST` vs `OPENROUTER_MODEL_ADVANCED` (mặc định GPT-4o mini) theo mức độ phức tạp
+   - Yêu cầu LLM trả JSON theo schema chuẩn, fallback khi sai format, tự chèn disclaimer an toàn
+5. **Intelligent Response Enhancement**
+   - Bổ sung follow-up, relatedFeatures, recommendations nếu LLM không trả đủ; tất cả ở dạng hành động cụ thể
+   - Phản hồi kèm thông tin quota (`used`, `monthlyLimit`, `warnings`) để client hiển thị
+6. **Advanced Events & Learning** (publish qua `domainEvents`)
+   - `ai.query_processed` (intent, model, latency, confidence)
+   - `recommendation.generated` (danh sách khuyến nghị, confidence)
+   - `user.engagement_tracked` (feature = `ai_chat`, metadata intent)
+7. **Response Format**
    ```json
    {
      "answer": "...",
-     "confidence": 0.95,
+     "confidence": 0.82,
      "recommendations": [...],
      "visualizations": [...],
      "followUpQuestions": [...],
      "relatedFeatures": [...],
-     "disclaimers": [...]
+     "disclaimers": ["Thông tin chỉ mang tính tham khảo..."]
    }
    ```
 
@@ -344,9 +338,14 @@
 ### 3.12 Admin giam sat
 
 1. Admin login `POST /api/v1/admin/auth/login` (yeu cau role=admin, nen co 2FA).
-2. Dashboard `GET /api/v1/admin/metrics/overview` lay du lieu tu Reporting service (cache Redis 5 phut).
-3. Quan ly subscription plan `POST/PUT /api/v1/admin/plans` -> thong qua service -> invalidate cache.
-4. Theo doi log dong bo `GET /api/v1/admin/sync-logs` -> co filter thoi gian, status.
+  2. Dashboard `GET /api/v1/admin/metrics/overview` lay du lieu tu Reporting service (cache Redis 5 phut).
+     - Ket qua gom tong user/active, thong ke subscription, plan status, giao dich 30 ngay va sync log 24h.
+     - Cache key `admin:metrics:overview`, TTL 300s, auto invalidate khi plan thay doi.
+  3. Quan ly subscription plan `POST/PUT /api/v1/admin/plans` -> thong qua service -> invalidate cache.
+     - `POST` tao plan moi, bat buoc `planName`, `planType`, `price`, `billingPeriod`.
+     - `PUT /api/v1/admin/plans/{planId}` cap nhat cac chi so quota, status, features.
+  4. Theo doi log dong bo `GET /api/v1/admin/sync-logs` -> co filter thoi gian, status.
+     - Ho tro params `startDate`, `endDate`, `status`, `syncType`, `userId`, `walletId`, `page`, `limit`.
 
 ## 4. Quan he giua cac service
 

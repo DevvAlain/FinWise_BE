@@ -81,9 +81,20 @@ const createTransactionWithWallet = async (req, res) => {
   }
 };
 
+const chat = async (req, res) => {
+  try {
+    const result = await aiService.chat(req.user.id, req.body || {});
+    return res.status(result.statusCode || 200).json(result);
+  } catch (e) {
+    console.error('AI chat error:', e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 export default {
   parseExpense,
   qa,
+  chat,
   parseTransactionDraft,
   createTransactionWithWallet
 };
