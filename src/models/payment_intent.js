@@ -14,12 +14,20 @@ const PaymentIntentSchema = new mongoose.Schema(
     },
     provider: {
       type: String,
-      enum: ['momo', 'zalopay', 'vnpay', 'napas', 'stripe', 'manual'],
+      enum: ['momo', 'zalopay', 'vnpay', 'napas', 'stripe', 'manual', 'payos'],
       required: true,
     },
     paymentMethod: {
       type: String,
-      enum: ['momo', 'zalopay', 'vnpay', 'bank_transfer', 'credit_card', 'other'],
+      enum: [
+        'momo',
+        'zalopay',
+        'vnpay',
+        'bank_transfer',
+        'credit_card',
+        'other',
+        'payos_qr',
+      ],
       required: true,
     },
     amount: {

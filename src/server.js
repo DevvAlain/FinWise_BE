@@ -11,8 +11,22 @@ dotenv.config(); // Load biến môi trường từ .env
 
 let app = express();
 app.use(cors({ origin: true }));
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(
+  bodyParser.json({
+    limit: '1mb',
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }),
+);
+app.use(
+  bodyParser.urlencoded({
+    extended: true,
+    verify: (req, res, buf) => {
+      req.rawBody = buf.toString('utf8');
+    },
+  }),
+);
 
 viewEngine(app);
 initWebRoutes(app);

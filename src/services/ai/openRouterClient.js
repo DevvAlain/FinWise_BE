@@ -11,7 +11,10 @@ if (!OPENROUTER_API_KEY) {
 }
 
 // Generic chat function using DeepSeek via OpenRouter
-export async function openRouterChat(messages, model = OPENROUTER_MODEL) {
+export async function openRouterChat(
+  messages,
+  { model = OPENROUTER_MODEL, temperature = 0.1, maxTokens = 100 } = {},
+) {
   try {
     const res = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
@@ -24,8 +27,8 @@ export async function openRouterChat(messages, model = OPENROUTER_MODEL) {
       body: JSON.stringify({
         model,
         messages,
-        temperature: 0.1, // Low temperature for consistent category classification
-        max_tokens: 100
+        temperature,
+        max_tokens: maxTokens,
       }),
     });
 

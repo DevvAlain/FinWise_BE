@@ -1,11 +1,146 @@
+import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { openRouterChat, classifyExpenseCategory } from './ai/openRouterClient.js';
 import Wallet from '../models/wallet.js';
 import transactionService from './transactionService.js';
 import AuditLog from '../models/audit_log.js';
+import AiConversation from '../models/ai_conversation.js';
+import Transaction from '../models/transaction.js';
+import Budget from '../models/budget.js';
+import SavingGoal from '../models/saving_goal.js';
+import Subscription from '../models/subscription.js';
+import User from '../models/user.js';
+import { ensureUsage } from '../middleware/quotaMiddleware.js';
+import { publishDomainEvents } from '../events/domainEvents.js';
 import {
   resolveCategory,
   confirmCategorySuggestion as coreConfirmCategorySuggestion,
 } from './categoryResolutionService.js';
+
+const DEFAULT_AI_MONTHLY_LIMIT = Number(process.env.AI_DEFAULT_MONTHLY_LIMIT || 30);
+const CONVERSATION_HISTORY_LIMIT = Number(
+  process.env.AI_CONVERSATION_HISTORY_LIMIT || 10,
+);
+const MAX_CONTEXT_TRANSACTIONS = Number(
+  process.env.AI_CONTEXT_TRANSACTIONS || 10,
+);
+const ADVANCED_MODEL =
+  process.env.OPENROUTER_MODEL_ADVANCED || 'openai/gpt-4o-mini';
+const FAST_MODEL =
+  process.env.OPENROUTER_MODEL_FAST ||
+  process.env.OPENROUTER_MODEL ||
+  'deepseek/deepseek-chat-v3.1:free';
+
+const AI_CHAT_SYSTEM_PROMPT = `Bạn là trợ lý tài chính cá nhân cho người dùng Việt Nam.
+- Hiểu và trả lời bằng tiếng Việt thân thiện, súc tích.
+- Chỉ sử dụng dữ liệu được cung cấp trong ngữ cảnh (context) và lịch sử hội thoại.
+- Không bịa thông tin, luôn nêu rõ giả định nếu có.
+- Nếu câu hỏi vượt phạm vi hoặc cần chuyên gia, khuyên người dùng liên hệ chuyên gia.
+- Luôn trả kết quả dạng JSON với cấu trúc:
+{
+  "answer": string,
+  "confidence": number (0..1),
+  "recommendations": string[],
+  "visualizations": string[],
+  "followUpQuestions": string[],
+  "relatedFeatures": string[],
+  "disclaimers": string[]
+}
+- Nếu không chắc chắn, đặt confidence <= 0.6 và giải thích.
+- Với khuyến nghị, nêu rõ hành động cụ thể; tối đa 3 mục.
+- Nếu cần hiển thị biểu đồ, mô tả ngắn gọn (ví dụ: "Biểu đồ cột: Chi tiêu theo danh mục").`;
+
+const DEFAULT_DISCLAIMER =
+  'Thông tin chỉ mang tính tham khảo, không phải là tư vấn tài chính chuyên nghiệp.';
+
+const TOXIC_PATTERNS = [/suicide/i, /(kill|murder)/i, /(hack|scam)/i];
+const FINANCIAL_RISK_PATTERNS = [/đánh bạc/i, /cờ bạc/i, /trốn thuế/i];
+
+const estimateTokens = (text = '') => {
+  if (!text) return 0;
+  const words = text.trim().split(/\s+/).length;
+  return Math.ceil(words * 1.3);
+};
+
+const sanitizeQuestion = (question = '') => question.trim();
+
+const hasContentViolation = (text = '') => {
+  return [...TOXIC_PATTERNS, ...FINANCIAL_RISK_PATTERNS].some((regex) =>
+    regex.test(text),
+  );
+};
+
+const classifyIntent = (question = '') => {
+  const normalized = question.toLowerCase();
+  const mapper = [
+    { intent: 'budgeting', keywords: ['ngân sách', 'budget', 'chi tiêu'] },
+    { intent: 'analysis', keywords: ['phân tích', 'thống kê', 'xu hướng'] },
+    { intent: 'saving_goal', keywords: ['tiết kiệm', 'mục tiêu', 'saving'] },
+    { intent: 'investment', keywords: ['đầu tư', 'lợi nhuận', 'risk'] },
+    { intent: 'advice', keywords: ['nên làm gì', 'khuyên', 'gợi ý'] },
+  ];
+
+  let detected = 'general';
+  mapper.forEach((item) => {
+    if (item.keywords.some((kw) => normalized.includes(kw))) {
+      detected = item.intent;
+    }
+  });
+
+  const lengthScore = normalized.length;
+  const complexity =
+    lengthScore > 400
+      ? 'high'
+      : lengthScore > 180 || normalized.includes('phân tích')
+        ? 'medium'
+        : 'low';
+  const recommendedModel = complexity === 'high' ? ADVANCED_MODEL : FAST_MODEL;
+  const confidence =
+    detected === 'general'
+      ? 0.45
+      : complexity === 'high'
+        ? 0.75
+        : 0.6;
+
+  return {
+    intent: detected,
+    confidence,
+    complexity,
+    recommendedModel,
+  };
+};
+
+const toNumber = (value) => {
+  if (value == null) return 0;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (value instanceof mongoose.Types.Decimal128) {
+    return Number.parseFloat(value.toString());
+  }
+  if (typeof value === 'object' && value.$numberDecimal) {
+    return Number.parseFloat(value.$numberDecimal);
+  }
+  return 0;
+};
+
+const createConversationId = () =>
+  crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Date.now().toString(16);
+
+const trimMessages = (messages = []) => {
+  if (!Array.isArray(messages)) return [];
+  if (messages.length <= CONVERSATION_HISTORY_LIMIT * 2) return messages;
+  return messages.slice(-CONVERSATION_HISTORY_LIMIT * 2);
+};
+
+const formatCurrency = (value, currency = 'VND') =>
+  new Intl.NumberFormat('vi-VN', {
+    style: 'currency',
+    currency,
+    maximumFractionDigits: 0,
+  }).format(value);
 
 const parseSystemPrompt = `You are a Vietnamese finance parser. Extract structured fields from Vietnamese user text about expenses or incomes.
 
@@ -27,15 +162,46 @@ categoryName(string), occurredAt(ISO string), description(string), confidence(nu
 If date missing, use now. Do not include extra keys. Return only the JSON object, no markdown formatting.`;
 
 // Helper function to clean AI response and extract JSON
+const extractJsonBlock = (input) => {
+  if (!input || typeof input !== 'string') return null;
+  let start = input.indexOf('{');
+  while (start !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < input.length; i += 1) {
+      const ch = input[i];
+      if (inString) {
+        if (escape) {
+          escape = false;
+        } else if (ch === '\\') {
+          escape = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+      } else if (ch === '"') {
+        inString = true;
+      } else if (ch === '{') {
+        depth += 1;
+      } else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          return input.slice(start, i + 1);
+        }
+      }
+    }
+    start = input.indexOf('{', start + 1);
+  }
+  return null;
+};
+
 const cleanJsonResponse = (response) => {
   if (!response || typeof response !== 'string') {
     throw new Error('Invalid response format');
   }
 
-  // Remove markdown code blocks if present
   let cleaned = response.trim();
 
-  // Remove ```json and ``` markers
   if (cleaned.startsWith('```json')) {
     cleaned = cleaned.replace(/^```json\s*/, '');
   }
@@ -46,10 +212,382 @@ const cleanJsonResponse = (response) => {
     cleaned = cleaned.replace(/\s*```$/, '');
   }
 
-  // Remove any leading/trailing whitespace
   cleaned = cleaned.trim();
-
+  const jsonBlock = extractJsonBlock(cleaned);
+  if (jsonBlock) return jsonBlock.trim();
   return cleaned;
+};
+
+const buildFollowUpQuestions = (intent) => {
+  switch (intent) {
+    case 'budgeting':
+      return [
+        'Tôi có nên điều chỉnh ngân sách danh mục nào không?',
+        'Bạn có gợi ý cách tiết kiệm chi tiêu tuần này không?',
+      ];
+    case 'saving_goal':
+      return [
+        'Làm sao để đạt mục tiêu tiết kiệm nhanh hơn?',
+        'Có nên tăng mức đóng góp hàng tháng không?',
+      ];
+    case 'analysis':
+      return [
+        'Bạn có thể so sánh với tháng trước không?',
+        'Có dấu hiệu bất thường nào trong chi tiêu gần đây?',
+      ];
+    default:
+      return [
+        'Bạn cần thêm thông tin nào về tài chính của tôi?',
+        'Có tính năng nào giúp tôi kiểm soát chi tiêu tốt hơn?',
+      ];
+  }
+};
+
+const relatedFeaturesByIntent = (intent) => {
+  switch (intent) {
+    case 'budgeting':
+      return ['budgets.list', 'budgets.create', 'reports.spendByCategory'];
+    case 'saving_goal':
+      return ['savingGoals.list', 'savingGoals.create', 'savingGoals.analytics'];
+    case 'analysis':
+      return ['reports.monthlyTrend', 'reports.categoryBreakdown'];
+    case 'investment':
+      return ['education.investmentBasics', 'alerts.marketNews'];
+    default:
+      return ['dashboard.overview', 'notifications.settings'];
+  }
+};
+
+const getOrCreateConversation = async (userId, conversationId) => {
+  let conversation = null;
+  if (conversationId) {
+    conversation = await AiConversation.findOne({
+      user: userId,
+      conversationId,
+    });
+  }
+
+  if (!conversation) {
+    const newConversationId = conversationId || createConversationId();
+    conversation = await AiConversation.create({
+      user: userId,
+      conversationId: newConversationId,
+      messages: [],
+      lastInteractionAt: new Date(),
+    });
+  }
+
+  return conversation;
+};
+
+const updateConversationMessages = async (
+  conversation,
+  userMessage,
+  assistantMessage,
+) => {
+  const messages = [...conversation.messages];
+  if (userMessage) {
+    messages.push({
+      role: 'user',
+      content: userMessage,
+      tokens: estimateTokens(userMessage),
+      createdAt: new Date(),
+    });
+  }
+  if (assistantMessage) {
+    messages.push({
+      role: 'assistant',
+      content: assistantMessage,
+      tokens: estimateTokens(assistantMessage),
+      createdAt: new Date(),
+    });
+  }
+
+  conversation.messages = trimMessages(messages);
+  conversation.totalTokens = conversation.messages.reduce(
+    (sum, msg) => sum + (msg.tokens || 0),
+    0,
+  );
+  conversation.lastInteractionAt = new Date();
+  await conversation.save();
+  return conversation;
+};
+
+const getActivePlanForUser = async (userId) => {
+  const subscription = await Subscription.findOne({
+    user: userId,
+    status: 'active',
+  }).populate('plan');
+  return subscription?.plan || null;
+};
+
+const checkAndIncrementAiQuota = async (userId) => {
+  const usage = await ensureUsage(userId);
+  const plan = await getActivePlanForUser(userId);
+  const limit =
+    typeof plan?.aiRecommendationsLimit === 'number'
+      ? plan.aiRecommendationsLimit
+      : DEFAULT_AI_MONTHLY_LIMIT;
+  const current = usage.aiCallsCount || 0;
+
+  if (limit && current >= limit) {
+    return {
+      allowed: false,
+      limit,
+      usageCount: current,
+      message: 'Bạn đã hết lượt sử dụng trợ lý AI trong kỳ này.',
+      usageDoc: usage,
+    };
+  }
+
+  const projected = current + 1;
+  const warnings = [];
+  if (limit && projected > limit) {
+    return {
+      allowed: false,
+      limit,
+      usageCount: current,
+      message: 'Vượt quá giới hạn lượt AI.',
+      usageDoc: usage,
+    };
+  }
+  if (limit && projected / limit >= 0.8 && projected < limit) {
+    warnings.push(
+      'Bạn sắp đạt giới hạn lượt AI cho chu kỳ hiện tại. Hãy cân nhắc sử dụng hợp lý.',
+    );
+  }
+
+  usage.aiCallsCount = projected;
+  await usage.save();
+
+  return {
+    allowed: true,
+    limit,
+    usageCount: projected,
+    warnings,
+    plan,
+    usageDoc: usage,
+  };
+};
+
+const buildFinancialSnapshot = async (userId) => {
+  const user = await User.findById(userId).lean();
+  const profile = {
+    fullName: user?.fullName,
+    timezone: user?.timezone || 'Asia/Ho_Chi_Minh',
+    language: user?.language || 'vi',
+  };
+
+  const since = new Date();
+  since.setDate(since.getDate() - 30);
+
+  const recentTransactions = await Transaction.find({
+    user: userId,
+    isDeleted: false,
+    occurredAt: { $gte: since },
+  })
+    .sort({ occurredAt: -1 })
+    .limit(MAX_CONTEXT_TRANSACTIONS)
+    .select('amount currency category description occurredAt type')
+    .populate('category', 'name nameEn')
+    .lean();
+
+  const categoryBreakdown = await Transaction.aggregate([
+    {
+      $match: {
+        user: new mongoose.Types.ObjectId(String(userId)),
+        isDeleted: false,
+        occurredAt: { $gte: since },
+        type: 'expense',
+      },
+    },
+    {
+      $group: {
+        _id: '$category',
+        total: { $sum: { $toDouble: '$amount' } },
+        count: { $sum: 1 },
+      },
+    },
+    {
+      $lookup: {
+        from: 'expense_categories',
+        localField: '_id',
+        foreignField: '_id',
+        as: 'systemCategory',
+      },
+    },
+    {
+      $lookup: {
+        from: 'user_expense_categories',
+        localField: '_id',
+        foreignField: '_id',
+        as: 'userCategory',
+      },
+    },
+    {
+      $addFields: {
+        categoryName: {
+          $ifNull: [
+            { $arrayElemAt: ['$userCategory.name', 0] },
+            { $arrayElemAt: ['$systemCategory.name', 0] },
+          ],
+        },
+      },
+    },
+    {
+      $project: {
+        _id: 1,
+        total: 1,
+        count: 1,
+        categoryName: 1,
+      },
+    },
+    { $sort: { total: -1 } },
+    { $limit: 5 },
+  ]);
+
+  const monthlyTrend = await Transaction.aggregate([
+    {
+      $match: {
+        user: new mongoose.Types.ObjectId(String(userId)),
+        isDeleted: false,
+        type: 'expense',
+        occurredAt: { $gte: since },
+      },
+    },
+    {
+      $group: {
+        _id: {
+          y: { $year: '$occurredAt' },
+          m: { $month: '$occurredAt' },
+        },
+        total: { $sum: { $toDouble: '$amount' } },
+      },
+    },
+    { $sort: { '_id.y': 1, '_id.m': 1 } },
+  ]);
+
+  const activeBudgets = await Budget.find({
+    user: userId,
+    isActive: true,
+  })
+    .sort({ updatedAt: -1 })
+    .limit(5)
+    .lean();
+
+  const savingGoals = await SavingGoal.find({
+    user: userId,
+    isDeleted: { $ne: true },
+    status: 'active',
+  })
+    .sort({ updatedAt: -1 })
+    .limit(5)
+    .lean();
+
+  return {
+    profile,
+    recentTransactions,
+    categoryBreakdown,
+    monthlyTrend,
+    budgets: activeBudgets,
+    savingGoals,
+  };
+};
+
+const formatFinancialContext = (snapshot) => {
+  const lines = [];
+  const { recentTransactions, categoryBreakdown, monthlyTrend, budgets, savingGoals } =
+    snapshot;
+
+  if (recentTransactions?.length) {
+    const totalRecent = recentTransactions.reduce(
+      (sum, tx) => sum + toNumber(tx.amount),
+      0,
+    );
+    lines.push(
+      `Past 30 days: ${recentTransactions.length} transactions, total spend ${formatCurrency(
+        totalRecent,
+      )}.`,
+    );
+  }
+
+  if (categoryBreakdown?.length) {
+    const top = categoryBreakdown.slice(0, 3).map((cat, idx) => {
+      const name = cat.categoryName
+        ? cat.categoryName
+        : cat._id
+          ? `Category ${cat._id}`
+          : 'Unclassified';
+      return `${idx + 1}. ${name} - ${formatCurrency(cat.total)}`;
+    });
+    lines.push(`Top spending categories: ${top.join('; ')}.`);
+  }
+
+  if (budgets?.length) {
+    const budgetSummaries = budgets.map((budget) => {
+      const spent = toNumber(budget.spentAmount);
+      const total = toNumber(budget.amount);
+      const percent = total > 0 ? Math.round((spent / total) * 100) : 0;
+      return `${budget.period} - ${percent}% (${formatCurrency(spent)} / ${formatCurrency(total)})`;
+    });
+    lines.push(`Active budgets: ${budgetSummaries.join('; ')}.`);
+  }
+
+  if (savingGoals?.length) {
+    const goalSummaries = savingGoals.map((goal) => {
+      const progress =
+        goal.targetAmount && toNumber(goal.targetAmount) > 0
+          ? Math.round(
+              (toNumber(goal.currentAmount) / toNumber(goal.targetAmount)) * 100,
+            )
+          : 0;
+      return `${goal.title || 'Goal'}: ${progress}% complete`;
+    });
+    lines.push(`Saving goal progress: ${goalSummaries.join('; ')}.`);
+  }
+
+  if (monthlyTrend?.length) {
+    const last = monthlyTrend[monthlyTrend.length - 1];
+    const before =
+      monthlyTrend.length > 1 ? monthlyTrend[monthlyTrend.length - 2] : null;
+    if (last) {
+      const currentSpend = formatCurrency(last.total);
+      let trendLine = `Latest month spend: ${currentSpend}.`;
+      if (before) {
+        const delta = last.total - before.total;
+        const deltaPercent =
+          before.total > 0 ? Math.round((delta / before.total) * 100) : 0;
+        trendLine += ` Vs previous month ${delta >= 0 ? 'up' : 'down'} ${Math.abs(deltaPercent)}%.`;
+      }
+      lines.push(trendLine);
+    }
+  }
+
+  lines.push(
+    'Market note: living costs typically rise toward year end, monitor budgets closely.',
+  );
+
+  return lines.join('\n');
+};
+
+
+
+
+const parseAssistantResponse = (raw) => {
+  try {
+    const cleaned = cleanJsonResponse(raw);
+    return JSON.parse(cleaned);
+  } catch (error) {
+    return {
+      answer: raw,
+      confidence: 0.55,
+      recommendations: [],
+      visualizations: [],
+      followUpQuestions: [],
+      relatedFeatures: [],
+      disclaimers: [DEFAULT_DISCLAIMER],
+    };
+  }
 };
 
 const logAiAudit = async (userId, action, metadata) => {
@@ -417,11 +955,191 @@ export async function createTransactionFromParsedData(userId, transactionData) {
   }
 }
 
+export const chat = async (userId, payload = {}) => {
+  const conversationId = payload.conversationId;
+  const question = sanitizeQuestion(payload.question || '');
+
+  if (!question) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: 'Thiếu câu hỏi cho trợ lý AI',
+    };
+  }
+
+  if (hasContentViolation(question)) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: 'Nội dung câu hỏi không phù hợp để xử lý',
+    };
+  }
+
+  const quota = await checkAndIncrementAiQuota(userId);
+  if (!quota.allowed) {
+    return {
+      success: false,
+      statusCode: 429,
+      message: quota.message || 'Đã vượt giới hạn lượt AI',
+      data: {
+        used: quota.usageCount,
+        monthlyLimit: quota.limit ?? null,
+      },
+    };
+  }
+
+  const conversation = await getOrCreateConversation(userId, conversationId);
+  const effectiveConversationId = conversation.conversationId;
+
+  const snapshot = await buildFinancialSnapshot(userId);
+  const contextSummary = formatFinancialContext(snapshot);
+
+  const { intent, confidence: intentConfidence, complexity, recommendedModel } =
+    classifyIntent(question);
+
+  const historyMessages = trimMessages(
+    conversation.messages.map((msg) => ({ role: msg.role, content: msg.content })),
+  );
+
+  const messages = [
+    { role: 'system', content: AI_CHAT_SYSTEM_PROMPT },
+    {
+      role: 'system',
+      content: `Thông tin người dùng: ${JSON.stringify(snapshot.profile)}\nÝ định dự đoán: ${intent} (độ tin cậy ${intentConfidence}).`,
+    },
+    {
+      role: 'assistant',
+      content: `Tóm tắt tài chính gần đây:\n${contextSummary}`,
+    },
+    ...historyMessages,
+    { role: 'user', content: question },
+  ];
+
+  const usageDoc = quota.usageDoc;
+  const startedAt = Date.now();
+  let rawResponse;
+  try {
+    rawResponse = await openRouterChat(messages, {
+      model: recommendedModel,
+      temperature: complexity === 'high' ? 0.2 : 0.35,
+      maxTokens: 600,
+    });
+  } catch (error) {
+    if (usageDoc) {
+      usageDoc.aiCallsCount = Math.max((usageDoc.aiCallsCount || 1) - 1, 0);
+      await usageDoc.save();
+    }
+    throw error;
+  }
+  const latencyMs = Date.now() - startedAt;
+
+  const parsed = parseAssistantResponse(rawResponse);
+  parsed.disclaimers =
+    Array.isArray(parsed.disclaimers) && parsed.disclaimers.length > 0
+      ? parsed.disclaimers
+      : [DEFAULT_DISCLAIMER];
+  parsed.followUpQuestions =
+    Array.isArray(parsed.followUpQuestions) && parsed.followUpQuestions.length > 0
+      ? parsed.followUpQuestions
+      : buildFollowUpQuestions(intent);
+  parsed.relatedFeatures =
+    Array.isArray(parsed.relatedFeatures) && parsed.relatedFeatures.length > 0
+      ? parsed.relatedFeatures
+      : relatedFeaturesByIntent(intent);
+  parsed.recommendations = Array.isArray(parsed.recommendations)
+    ? parsed.recommendations
+    : [];
+  parsed.visualizations = Array.isArray(parsed.visualizations)
+    ? parsed.visualizations
+    : [];
+
+  const answerText = parsed.answer || rawResponse;
+  await updateConversationMessages(conversation, question, answerText);
+
+  await logAiAudit(userId, 'ai_chat_exchange', {
+    conversationId: effectiveConversationId,
+    question,
+    intent,
+    intentConfidence,
+    model: recommendedModel,
+    response: parsed,
+    rawResponse,
+    latencyMs,
+    warnings: quota.warnings,
+  });
+
+  await publishDomainEvents([
+    {
+      name: 'ai.query_processed',
+      payload: {
+        userId,
+        conversationId: effectiveConversationId,
+        intent,
+        model: recommendedModel,
+        latencyMs,
+        confidence: parsed.confidence ?? null,
+      },
+    },
+    {
+      name: 'recommendation.generated',
+      payload: {
+        userId,
+        conversationId: effectiveConversationId,
+        recommendations: parsed.recommendations,
+        confidence: parsed.confidence ?? null,
+      },
+    },
+    {
+      name: 'user.engagement_tracked',
+      payload: {
+        userId,
+        feature: 'ai_chat',
+        metadata: {
+          conversationId: effectiveConversationId,
+          intent,
+          complexity,
+        },
+      },
+    },
+  ]);
+
+  return {
+    success: true,
+    statusCode: 200,
+    data: {
+      conversationId: effectiveConversationId,
+      answer: parsed.answer || answerText,
+      confidence: parsed.confidence ?? 0.7,
+      recommendations: parsed.recommendations,
+      visualizations: parsed.visualizations,
+      followUpQuestions: parsed.followUpQuestions,
+      relatedFeatures: parsed.relatedFeatures,
+      disclaimers: parsed.disclaimers,
+      intent,
+      model: recommendedModel,
+      usage: {
+        monthlyLimit: quota.limit ?? null,
+        used: quota.usageCount,
+        warnings: quota.warnings || [],
+      },
+      metadata: {
+        intentConfidence,
+        complexity,
+        latencyMs,
+      },
+    },
+  };
+};
+
 export default {
   parseExpense,
   qa,
+  chat,
   generateTransactionDraftFromText,
   createTransactionFromDraft,
   createTransactionFromParsedData,
   confirmCategorySuggestion,
 };
+
+
+
