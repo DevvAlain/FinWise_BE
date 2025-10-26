@@ -134,22 +134,25 @@ const templates = {
       return { subject, html: makeLayout(subject, body, `© ${process.env.APP_NAME || 'FinWise'}`) };
     }
 
+    // Vietnamese (improved card style)
     const subject = p.title || 'Gợi ý tiết kiệm mới từ AI';
+    const pointsHtml = p.recommendations && p.recommendations.length
+      ? `<ul style="margin:8px 0 0 18px;color:#0f172a">${p.recommendations.map(r => `<li>${r}</li>`).join('')}</ul>`
+      : '';
+
+    const savingsLine = p.estimatedSaving ? `<p style="margin-top:10px;color:#0f172a">Ước tính tiết kiệm: <strong>${p.estimatedSaving}</strong></p>` : '';
+
     const body = `
       <p>Xin chào ${p.fullName || ''},</p>
-      <p style="color:#334155">${p.summary || 'Chúng tôi đã phân tích hoạt động gần đây và có một gợi ý cá nhân giúp bạn tiết kiệm hơn.'}</p>
-      ${p.recommendations && p.recommendations.length ? `
-        <div style="margin-top:12px;">
-          <strong>Gợi ý</strong>
-          <ul style="margin:8px 0 0 18px;color:#0f172a">
-            ${p.recommendations.map(r => `<li>${r}</li>`).join('')}
-          </ul>
-        </div>
-      ` : ''}
-      <div style="text-align:center;margin:20px 0;">
-        <a href="${frontend}/recommendations/${p.recommendationId || ''}" style="background:#4f46e5;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600;">Xem gợi ý</a>
+      <div style="background:#f8fafc;border:1px solid #eef2ff;padding:14px;border-radius:8px;margin-top:8px;color:#0f172a">
+        <p style="margin:0 0 8px;font-weight:600">${p.summary || 'Chúng tôi đã phân tích hoạt động gần đây và có một gợi ý cá nhân giúp bạn tiết kiệm hơn.'}</p>
+        ${pointsHtml}
+        ${savingsLine}
       </div>
-      <p style="color:#6b7280;font-size:13px;margin-top:10px">Nếu bạn không muốn nhận email gợi ý, <a href="${unsubscribeUrl}">huỷ đăng ký</a>.</p>
+      <div style="text-align:center;margin:20px 0;">
+        <a href="${frontend}/recommendations/${p.recommendationId || ''}" style="background:#4f46e5;color:#fff;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Xem gợi ý</a>
+      </div>
+      <p style="color:#6b7280;font-size:13px">Nếu bạn không muốn nhận email gợi ý, <a href="${unsubscribeUrl}">hủy đăng ký</a>.</p>
     `;
     return { subject, html: makeLayout(subject, body, `© ${process.env.APP_NAME || 'FinWise'}`) };
   },
@@ -254,6 +257,46 @@ const templates = {
       ` : ''}
       <p style="color:#6b7280;font-size:13px;margin-top:12px">Nếu hữu ích, mở app để thực hiện các hành động.</p>
       <p style="color:#6b7280;font-size:13px;margin-top:8px">Hủy nhận: <a href="${unsubscribeUrl}">nhấn vào đây</a></p>
+    `;
+    return { subject, html: makeLayout(subject, body, `© ${process.env.APP_NAME || 'FinWise'}`) };
+  },
+
+  subscriptionActivated: (p, locale = 'vi') => {
+    const frontend = process.env.FRONTEND_URL || 'https://app.example.com';
+    const planName = p.planName || (p.plan && p.plan.planName) || 'Gói dịch vụ';
+    const startDate = p.startDate ? new Date(p.startDate).toLocaleString(locale === 'en' ? 'en-US' : 'vi-VN') : '';
+    const endDate = p.endDate ? new Date(p.endDate).toLocaleString(locale === 'en' ? 'en-US' : 'vi-VN') : '';
+    const manageUrl = `${frontend}/subscriptions`;
+
+    if (locale === 'en') {
+      const subject = `${planName} activated`;
+      const body = `
+        <p>Hi ${p.fullName || ''},</p>
+        <p style="color:#0f172a;font-weight:600;font-size:16px">Your <strong>${planName}</strong> has been successfully activated.</p>
+        <table style="width:100%;margin-top:12px;border-collapse:collapse;color:#0f172a">
+          <tr><td style="padding:6px 0;color:#6b7280">Start date</td><td style="text-align:right;padding:6px 0">${startDate}</td></tr>
+          <tr><td style="padding:6px 0;color:#6b7280">End date</td><td style="text-align:right;padding:6px 0">${endDate}</td></tr>
+        </table>
+        <div style="text-align:center;margin:20px 0;">
+          <a href="${manageUrl}" style="background:#4f46e5;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Manage subscription</a>
+        </div>
+        <p style="color:#6b7280;font-size:13px">If you have any questions, reply to this email or visit our <a href="${frontend}/support">support</a> page.</p>
+      `;
+      return { subject, html: makeLayout(subject, body, `© ${process.env.APP_NAME || 'FinWise'}`) };
+    }
+
+    const subject = `Gói dịch vụ "${planName}" đã được kích hoạt`;
+    const body = `
+      <p>Xin chào ${p.fullName || ''},</p>
+      <p style="color:#0f172a;font-weight:600;font-size:16px">Gói <strong>${planName}</strong> của bạn đã được kích hoạt thành công.</p>
+      <table style="width:100%;margin-top:12px;border-collapse:collapse;color:#0f172a">
+        <tr><td style="padding:6px 0;color:#6b7280">Ngày bắt đầu</td><td style="text-align:right;padding:6px 0">${startDate}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Ngày kết thúc</td><td style="text-align:right;padding:6px 0">${endDate}</td></tr>
+      </table>
+      <div style="text-align:center;margin:20px 0;">
+        <a href="${manageUrl}" style="background:#4f46e5;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700;display:inline-block">Quản lý gói</a>
+      </div>
+      <p style="color:#6b7280;font-size:13px">Nếu bạn có câu hỏi, trả lời email này hoặc truy cập <a href="${frontend}/support">trung tâm trợ giúp</a>.</p>
     `;
     return { subject, html: makeLayout(subject, body, `© ${process.env.APP_NAME || 'FinWise'}`) };
   },

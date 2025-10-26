@@ -37,9 +37,8 @@ const initNotificationJobs = () => {
       if (!user) return;
 
       const subject = payload.title || 'Ket qua dong bo vi';
-      const html = `<p>Trang thai dong bo: ${payload.status || 'unknown'}</p><p>${
-        payload.message || ''
-      }</p>`;
+      const html = `<p>Trang thai dong bo: ${payload.status || 'unknown'}</p><p>${payload.message || ''
+        }</p>`;
       await emailService.sendNotificationEmail(user, subject, html);
     } catch (error) {
       console.error('notification.sync_result handler error:', error);
@@ -149,9 +148,8 @@ const initNotificationJobs = () => {
       if (!user) return;
 
       const subject = payload.title || 'Goi y tiet kiem moi tu AI';
-      const html = `<p>${
-        payload.summary || (payload.recommendations || []).join('<br />') || 'Ban co goi y moi.'
-      }</p>`;
+      const html = `<p>${payload.summary || (payload.recommendations || []).join('<br />') || 'Ban co goi y moi.'
+        }</p>`;
       await emailService.sendNotificationEmail(user, subject, html);
     } catch (error) {
       console.error('recommendation.generated handler error:', error);
@@ -164,9 +162,16 @@ const initNotificationJobs = () => {
       const user = await findUser(payload?.userId);
       if (!user) return;
 
-      const subject = 'Goi dich vu da duoc kich hoat';
-      const html = '<p>Goi dich vu cua ban da duoc kich hoat. Cam on ban da su dung dich vu.</p>';
-      await emailService.sendNotificationEmail(user, subject, html);
+      const tpl = getTemplate(
+        'subscriptionActivated',
+        {
+          ...payload,
+          fullName: user.fullName || user.username,
+          planName: payload?.planName || (payload?.plan && payload.plan.planName) || undefined,
+        },
+        'vi',
+      );
+      await emailService.sendNotificationEmail(user, tpl.subject, tpl.html);
     } catch (error) {
       console.error('subscription.activated handler error:', error);
     }
