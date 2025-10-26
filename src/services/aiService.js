@@ -17,6 +17,22 @@ import {
   confirmCategorySuggestion as coreConfirmCategorySuggestion,
 } from './categoryResolutionService.js';
 
+// Safe wrapper around resolveCategory to catch rare E11000 duplicate-key races
+// that can occur when auto-creating user category mappings concurrently.
+const safeResolveCategory = async (userId, opts) => {
+  try {
+    return await resolveCategory(userId, opts);
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : '';
+    const isDup = /E11000|duplicate key|normalizedName/i.test(msg);
+    if (isDup) {
+      console.warn('[AI] Duplicate-key race when resolving category; falling back to no-category for transaction', { userId, opts });
+      return { categoryId: null, needsConfirmation: false };
+    }
+    throw err;
+  }
+};
+
 const DEFAULT_AI_MONTHLY_LIMIT = Number(process.env.AI_DEFAULT_MONTHLY_LIMIT || 30);
 const CONVERSATION_HISTORY_LIMIT = Number(
   process.env.AI_CONVERSATION_HISTORY_LIMIT || 10,
@@ -538,8 +554,8 @@ const formatFinancialContext = (snapshot) => {
       const progress =
         goal.targetAmount && toNumber(goal.targetAmount) > 0
           ? Math.round(
-              (toNumber(goal.currentAmount) / toNumber(goal.targetAmount)) * 100,
-            )
+            (toNumber(goal.currentAmount) / toNumber(goal.targetAmount)) * 100,
+          )
           : 0;
       return `${goal.title || 'Goal'}: ${progress}% complete`;
     });
@@ -605,11 +621,28 @@ const parseExpense = async (userId, userText) => {
       { role: 'user', content: userText }
     ];
 
-    const response = await openRouterChat(messages);
+    const response = await openRouterChat(messages, {
+      maxTokens: 320,
+      temperature: 0.1,
+    });
 
     // Clean the response to remove markdown formatting
     const cleanedResponse = cleanJsonResponse(response);
-    const parsedData = JSON.parse(cleanedResponse);
+    if (!cleanedResponse) {
+      throw new Error('AI returned an empty response');
+    }
+    let parsedData;
+    try {
+      parsedData = JSON.parse(cleanedResponse);
+    } catch (parseError) {
+      const sample =
+        cleanedResponse.length > 200
+          ? `${cleanedResponse.slice(0, 200)}...`
+          : cleanedResponse;
+      throw new Error(
+        `Failed to parse AI JSON response: ${parseError.message}. Sample: ${sample}`,
+      );
+    }
 
     await logAiAudit(userId, 'ai_parse_transaction', {
       prompt: parseSystemPrompt,
@@ -748,7 +781,7 @@ export async function generateTransactionDraftFromText(userId, { text, walletId 
     draft.amount = numericAmount;
   }
 
-  const categoryResolution = await resolveCategory(userId, {
+  const categoryResolution = await safeResolveCategory(userId, {
     categoryName: parsed.categoryName,
   });
 
@@ -808,7 +841,7 @@ export async function createTransactionFromDraft(userId, draft) {
 
   let categoryResolution = { categoryId: categoryId || null, needsConfirmation: false };
   if (!categoryId && categoryName) {
-    categoryResolution = await resolveCategory(userId, {
+    categoryResolution = await safeResolveCategory(userId, {
       categoryName,
     });
   }
@@ -900,8 +933,8 @@ export async function createTransactionFromParsedData(userId, transactionData) {
       };
     }
 
-    // Resolve category
-    const categoryResolution = await resolveCategory(userId, { categoryName });
+    // Resolve category (use safe wrapper to handle rare duplicate-key races)
+    const categoryResolution = await safeResolveCategory(userId, { categoryName });
 
     // Handle category confirmation if needed
     if (categoryResolution.needsConfirmation) {

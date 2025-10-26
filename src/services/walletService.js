@@ -7,6 +7,7 @@ import Subscription from '../models/subscription.js';
 import { ensureUsage } from '../middleware/quotaMiddleware.js';
 import integrationJobService from './integrationJobService.js';
 import walletSyncService from './walletSyncService.js';
+import { publishDomainEvents } from '../events/domainEvents.js';
 
 const WALLET_TYPES = ['bank', 'e-wallet', 'cash', 'credit_card'];
 const DEFAULT_CURRENCY = 'VND';
@@ -62,14 +63,21 @@ const maybeTriggerWalletQuotaWarning = async (userId, { previous, current }) => 
     const currentRatio = current / maxWallets;
 
     if (currentRatio >= 0.8 && prevRatio < 0.8) {
-      await Notification.create({
-        user: userId,
-        notificationType: 'system',
-        title: 'Sap dat gioi han so vi',
-        message: `Ban da su dung ${current}/${maxWallets} vi theo goi hien tai. Vui long xem xet nang cap neu can them.`,
-        priority: 'medium',
-        channel: 'in_app',
-      });
+      // Publish a domain event instead of creating an in-app Notification document.
+      // The notification worker will send email to the user.
+      await publishDomainEvents([
+        {
+          name: 'notification.quota_warning',
+          payload: {
+            userId,
+            title: 'Sắp đạt giới hạn số ví',
+            message: `Bạn đã sử dụng ${current}/${maxWallets} ví theo gói hiện tại. Vui lòng xem xét nâng cấp nếu cần thêm.`,
+            priority: 'medium',
+            meta: { current, maxWallets },
+            timestamp: new Date(),
+          },
+        },
+      ]);
     }
   } catch (error) {
     console.error('Failed to create wallet quota warning notification:', error);

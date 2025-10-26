@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import Budget from '../models/budget.js';
 import Transaction from '../models/transaction.js';
 import QuotaUsage from '../models/quota_usage.js';
@@ -335,6 +336,21 @@ const getPeriodDates = (period, startDate = new Date()) => {
   return { periodStart, periodEnd };
 };
 
+const extractId = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (value instanceof mongoose.Types.ObjectId) return value.toString();
+  if (value._id) return extractId(value._id);
+  if (value.id) return extractId(value.id);
+  if (typeof value.toString === 'function') {
+    const str = value.toString();
+    if (mongoose.Types.ObjectId.isValid(str)) {
+      return str;
+    }
+  }
+  return null;
+};
+
 const calculateSpentAmount = async (budget) => {
   const query = {
     user: budget.user,
@@ -348,12 +364,18 @@ const calculateSpentAmount = async (budget) => {
 
   // Add category filter if specified
   if (budget.category) {
-    query.category = budget.category;
+    const categoryId = extractId(budget.category);
+    if (categoryId) {
+      query.category = categoryId;
+    }
   }
 
   // Add wallet filter if specified
   if (budget.wallet) {
-    query.wallet = budget.wallet;
+    const walletId = extractId(budget.wallet);
+    if (walletId) {
+      query.wallet = walletId;
+    }
   }
 
   const transactions = await Transaction.find(query);
@@ -362,6 +384,79 @@ const calculateSpentAmount = async (budget) => {
   }, 0);
 
   return spentAmount;
+};
+
+export const recalculateBudgetsForTransaction = async (userId, transaction) => {
+  try {
+    if (!transaction || transaction.type !== 'expense') {
+      return;
+    }
+
+    const occurredAt = new Date(transaction.occurredAt);
+    const txCategory = extractId(transaction.category);
+    const txWallet = extractId(transaction.wallet);
+
+    // Fetch all active budgets for the user and decide per-budget whether the
+    // given transaction's occurredAt falls into that budget's current period or
+    // the period that would include occurredAt for the budget's period type.
+    // This is more robust than only querying budgets whose stored periodRange
+    // currently contains occurredAt (which can miss weekly/monthly budgets if
+    // their stored periodStart/periodEnd are out-of-date).
+    const allBudgets = await Budget.find({ user: userId, isActive: true });
+    if (!allBudgets || allBudgets.length === 0) return;
+
+    const updates = [];
+    for (const budget of allBudgets) {
+      const matchesCategory =
+        !budget.category || (txCategory && extractId(budget.category) === txCategory);
+      const matchesWallet =
+        !budget.wallet || (txWallet && extractId(budget.wallet) === txWallet);
+
+      if (!matchesCategory || !matchesWallet) continue;
+
+      // Determine the period window that should apply for this budget given
+      // the transaction date. If the transaction falls into the budget's
+      // current stored window, keep it; otherwise compute the window that
+      // contains occurredAt (getPeriodDates) and use that for recalculation.
+      let periodStart = budget.periodStart;
+      let periodEnd = budget.periodEnd;
+
+      if (!periodStart || !periodEnd) {
+        const p = getPeriodDates(budget.period, occurredAt);
+        periodStart = p.periodStart;
+        periodEnd = p.periodEnd;
+      } else if (occurredAt < periodStart || occurredAt > periodEnd) {
+        const p = getPeriodDates(budget.period, occurredAt);
+        periodStart = p.periodStart;
+        periodEnd = p.periodEnd;
+        budget.periodStart = periodStart;
+        budget.periodEnd = periodEnd;
+      }
+
+      // Build a temporary budget-like object that uses the computed period
+      // when calculating spent amount so calculateSpentAmount uses the right
+      // window.
+      const budgetForCalc = {
+        ...budget.toObject ? budget.toObject() : budget,
+        periodStart,
+        periodEnd,
+      };
+
+      const spentAmount = await calculateSpentAmount(budgetForCalc);
+      const currentSpent = parseFloat(budget.spentAmount?.toString?.() || '0');
+      if (Number.isFinite(spentAmount) && spentAmount !== currentSpent) {
+        budget.spentAmount = spentAmount;
+        budget.lastCalculatedAt = new Date();
+        updates.push(budget.save());
+      }
+    }
+
+    if (updates.length > 0) await Promise.all(updates);
+    return updates.length > 0;
+  } catch (error) {
+    console.error('[Budget] Failed to recalculate budgets after transaction:', error);
+    return false;
+  }
 };
 
 const updateQuotaUsage = async (userId, planId, periodMonth) => {

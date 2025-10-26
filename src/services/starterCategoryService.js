@@ -115,15 +115,23 @@ export const createStarterCategoriesForUser = async (userId) => {
             });
 
             if (!userCategory) {
-                userCategory = await UserExpenseCategory.create({
-                    user: userId,
-                    category: systemCategory._id,
-                    customName: categoryData.name,
-                    normalizedName: categoryData.name.toLowerCase(),
-                    needsConfirmation: false,
-                    isActive: true,
-                    createdBy: 'system'
-                });
+                // use upsert to avoid duplicate key when called concurrently
+                userCategory = await UserExpenseCategory.findOneAndUpdate(
+                    { user: userId, normalizedName: categoryData.name.toLowerCase() },
+                    {
+                        $set: {
+                            user: userId,
+                            category: systemCategory._id,
+                            customName: categoryData.name,
+                            normalizedName: categoryData.name.toLowerCase(),
+                            needsConfirmation: false,
+                            isActive: true,
+                            createdBy: 'system',
+                        },
+                        $setOnInsert: { createdAt: new Date() },
+                    },
+                    { upsert: true, new: true, setDefaultsOnInsert: true },
+                );
             }
 
             createdCategories.push({

@@ -656,6 +656,61 @@ const sendSimpleInvoiceEmail = async ({ invoice, appointment }) => {
   return { success: true };
 };
 
+// (default export moved to the end of the file so helper functions are defined before being referenced)
+
+// Generic notification email helper
+const sendNotificationEmail = async (userOrEmail, subject, html) => {
+  try {
+    let toEmail = null;
+    if (typeof userOrEmail === 'string') {
+      if (userOrEmail.includes('@')) toEmail = userOrEmail;
+      else {
+        // assume userId
+        const user = await User.findById(userOrEmail);
+        if (user && user.email) toEmail = user.email;
+      }
+    } else if (userOrEmail && userOrEmail.email) {
+      toEmail = userOrEmail.email;
+    }
+
+    if (!toEmail) {
+      throw new Error('No recipient email found for notification');
+    }
+
+    const mailOptions = {
+      from: `${process.env.APP_NAME || 'FinWise'} <${process.env.EMAIL_USER}>`,
+      to: toEmail,
+      subject: subject || `${process.env.APP_NAME || 'FinWise'} - Thông báo`,
+      html: html || '<p>Bạn có thông báo mới.</p>',
+    };
+
+    const info = await sendEmail(mailOptions);
+    return { success: true, info };
+  } catch (error) {
+    console.error('sendNotificationEmail error:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+// Attach helper to default export
+export { sendNotificationEmail };
+
+// Dev helper: send a test notification email using template name and payload
+const sendTestNotification = async ({ to, eventType = 'recommendation', payload = {}, locale = 'vi' } = {}) => {
+  try {
+    // lazy import to avoid circular deps
+    const { getTemplate } = await import('../templates/notificationTemplates.js');
+    const tpl = getTemplate(eventType, payload, locale);
+    return await sendNotificationEmail(to, tpl.subject, tpl.html);
+  } catch (error) {
+    console.error('sendTestNotification error:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export { sendTestNotification };
+
+// Default export (backwards compatible)
 export default {
   sendVerificationEmail,
   verifyEmail,
@@ -666,4 +721,31 @@ export default {
   sendMaintenanceReminder,
   sendPackageRenewalReminder,
   sendSimpleInvoiceEmail,
+  sendNotificationEmail,
+  sendTestNotification,
+  // transaction created helper
+  sendTransactionCreatedEmail,
 };
+
+// Send a transaction-created email (convenience wrapper used by transactionService)
+const sendTransactionCreatedEmail = async (userOrEmail, userName, transaction, locale = 'vi') => {
+  try {
+    const { getTemplate } = await import('../templates/notificationTemplates.js');
+    const payload = {
+      fullName: userName || '',
+      amount: transaction?.amount,
+      currency: transaction?.currency,
+      occurredAt: transaction?.occurredAt,
+      description: transaction?.description,
+      type: transaction?.type,
+    };
+    const tpl = getTemplate('chatTransactionCreated', payload, locale);
+    return await sendNotificationEmail(userOrEmail, tpl.subject, tpl.html);
+  } catch (error) {
+    console.error('sendTransactionCreatedEmail error:', error);
+    return { success: false, message: error.message };
+  }
+};
+
+export { sendTransactionCreatedEmail };
+// (no secondary default export - primary export above includes the helper)

@@ -128,22 +128,48 @@ const autoCreateUserCategory = async (userId, systemCategory, categoryName, conf
       return userCategory;
     }
 
-    // Create new mapping
-    userCategory = await UserExpenseCategory.create({
-      user: userId,
-      category: systemCategory._id,
-      customName: categoryName,
-      normalizedName,
-      needsConfirmation: false,  // 🎯 AUTO-ASSIGNED
-      isActive: true,
-      createdBy: 'ai',
-      metadata: {
-        confidence,
-        matchType,
-        autoAssigned: true,
-        originalInput: categoryName
+    // Create new mapping using upsert to avoid duplicate-key race conditions
+    try {
+      userCategory = await UserExpenseCategory.findOneAndUpdate(
+        { user: userId, normalizedName },
+        {
+          $set: {
+            user: userId,
+            category: systemCategory._id,
+            customName: categoryName,
+            normalizedName,
+            needsConfirmation: false,
+            isActive: true,
+            createdBy: 'ai',
+            metadata: {
+              confidence,
+              matchType,
+              autoAssigned: true,
+              originalInput: categoryName,
+            },
+          },
+          $setOnInsert: {
+            createdAt: new Date(),
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true },
+      ).populate('category');
+    } catch (error) {
+      // If duplicate key occurs despite upsert (concurrent), try to fetch existing
+      if (error && error.code === 11000) {
+        userCategory = await UserExpenseCategory.findOne({ user: userId, normalizedName }).populate('category');
+        if (userCategory) {
+          // optionally update metadata
+          userCategory.metadata = userCategory.metadata || {};
+          userCategory.metadata.confidence = confidence;
+          userCategory.metadata.matchType = matchType;
+          userCategory.metadata.autoAssigned = true;
+          await userCategory.save();
+        }
+      } else {
+        throw error;
       }
-    });
+    }
 
     // Log auto-assignment
     await AuditLog.create({
@@ -198,15 +224,23 @@ const upsertCategorySuggestion = async (userId, categoryName) => {
 
   // If not exists, create new suggestion
   try {
-    suggestion = await UserExpenseCategory.create({
-      user: userId,
-      customName: categoryName,
-      normalizedName,
-      needsConfirmation: true,
-      isActive: false,
-      createdBy: 'ai',
-      category: null
-    });
+    suggestion = await UserExpenseCategory.findOneAndUpdate(
+      { user: userId, normalizedName, needsConfirmation: true, category: null },
+      {
+        $set: {
+          customName: categoryName,
+          isActive: false,
+          createdBy: 'ai',
+          category: null,
+          user: userId,
+          normalizedName,
+        },
+        $setOnInsert: {
+          createdAt: new Date(),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
 
     return suggestion;
   } catch (error) {

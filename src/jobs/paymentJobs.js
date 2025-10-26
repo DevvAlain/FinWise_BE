@@ -2,29 +2,17 @@ import cron from 'node-cron';
 import mongoose from 'mongoose';
 import PaymentIntent from '../models/payment_intent.js';
 import Payment from '../models/payment.js';
-import PaymentWebhookEvent from '../models/payment_webhook_event.js';
 import Subscription from '../models/subscription.js';
-import paymentProcessingService from '../services/paymentProcessingService.js';
 import subscriptionBillingService from '../services/subscriptionBillingService.js';
 import { publishDomainEvents } from '../events/domainEvents.js';
 
 const TIMEZONE = 'Asia/Ho_Chi_Minh';
-
-export const webhookSecureWorker = async () => {
-  try {
-    return await paymentProcessingService.processQueuedWebhookEvents(10);
-  } catch (error) {
-    console.error('[PaymentJobs] webhookSecureWorker error:', error);
-    throw error;
-  }
-};
 
 export const reconciliationWorker = async () => {
   const now = new Date();
   const results = {
     expiredIntents: 0,
     abortedPayments: 0,
-    resetEvents: 0,
   };
 
   const session = await mongoose.startSession();
@@ -63,18 +51,6 @@ export const reconciliationWorker = async () => {
         },
       ]);
     }
-
-    const staleEvents = await PaymentWebhookEvent.updateMany(
-      {
-        status: 'processing',
-        lockedAt: { $lt: new Date(Date.now() - 5 * 60 * 1000) },
-      },
-      {
-        status: 'queued',
-        lockedAt: null,
-      },
-    );
-    results.resetEvents = staleEvents.modifiedCount;
 
     await session.commitTransaction();
     return results;
@@ -145,11 +121,6 @@ export const autoRenewalWorker = async () => {
 export const initPaymentJobs = () => {
   console.log('[PaymentJobs] Initializing payment jobs...');
 
-  cron.schedule('*/1 * * * *', webhookSecureWorker, {
-    name: 'payment-webhook-secure-processor',
-    timezone: TIMEZONE,
-  });
-
   cron.schedule('*/5 * * * *', reconciliationWorker, {
     name: 'payment-reconciliation',
     timezone: TIMEZONE,
@@ -163,7 +134,6 @@ export const initPaymentJobs = () => {
   console.log('[PaymentJobs] Payment cron jobs registered');
 
   return {
-    webhookSecureWorker,
     reconciliationWorker,
     autoRenewalWorker,
   };
@@ -171,7 +141,6 @@ export const initPaymentJobs = () => {
 
 export default {
   initPaymentJobs,
-  webhookSecureWorker,
   reconciliationWorker,
   autoRenewalWorker,
 };

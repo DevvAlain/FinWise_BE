@@ -1,20 +1,19 @@
 # Subscription Billing Postman Snippets
 
-Các request mẫu dưới đây giúp kiểm thử nhanh flow thanh toán subscription (PayOS). Hãy tạo environment trong Postman với các biến:
+Use the requests below to exercise the subscription checkout flow with PayOS in Postman. Suggested environment variables:
 
 ```json
 {
   "base_url": "http://localhost:8080",
   "user_access_token": "<JWT-user>",
-  "plan_id": "<ObjectId của SubscriptionPlan>",
-  "payos_webhook_secret": "<dùng để mô phỏng signature nếu cần>"
+  "plan_id": "<SubscriptionPlan ObjectId>"
 }
 ```
 
 ## 1. Checkout Subscription
 
-- **Method**: `POST`
-- **URL**: `{{base_url}}/api/v1/subscriptions/checkout`
+- **Method**: `POST`  
+- **URL**: `{{base_url}}/api/v1/subscriptions/checkout`  
 - **Headers**:
   - `Authorization: Bearer {{user_access_token}}`
   - `Content-Type: application/json`
@@ -28,7 +27,7 @@ Các request mẫu dưới đây giúp kiểm thử nhanh flow thanh toán subsc
 }
 ```
 
-### Response mẫu (202)
+### Sample response (202)
 
 ```json
 {
@@ -50,60 +49,75 @@ Các request mẫu dưới đây giúp kiểm thử nhanh flow thanh toán subsc
 }
 ```
 
-Nếu đã có intent đang chờ, response sẽ là `200` với `message: "Existing payment intent found"` và giữ nguyên link cũ.
+If an active intent already exists the API returns `200` with the existing checkout link.
 
 ---
 
-## 2. PayOS Webhook (dev/test)
+## 2. Complete Payment via API (no webhook)
 
-- **Method**: `POST`
-- **URL**: `{{base_url}}/api/v1/payments/webhook/payos`
+- **Method**: `POST`  
+- **URL**: `{{base_url}}/api/v1/subscriptions/checkout/complete`  
 - **Headers**:
+  - `Authorization: Bearer {{user_access_token}}`
   - `Content-Type: application/json`
-  - `X-PayOS-Signature: {{calculated_signature}}` (nếu cần verify thủ công)
-  - `X-PayOS-Timestamp: {{timestamp_millis}}`
 - **Body**:
 
 ```json
 {
-  "code": "00",
-  "desc": "Webhook simulation",
-  "data": {
+  "requestId": "0f3c2e6bd7b74cf0bc6717b91d5ef420",
+  "status": "success",
+  "provider": "payos",
+  "providerData": {
+    "code": "00",
+    "status": "PAID",
     "orderCode": "0f3c2e6bd7b74cf0bc6717b91d5ef420",
     "transactionId": "PAYOS-TXN-987654321",
-    "status": "PAID",
     "amount": 199000,
-    "paidAt": "2025-10-08T03:02:11.000Z",
-    "currency": "VND"
+    "paidAt": "2025-10-08T03:02:11.000Z"
   }
 }
 ```
 
-> Ghi chú: Trong môi trường thật, PayOS sẽ ký payload bằng `PAYOS_CHECKSUM_KEY`. Để mô phỏng, có thể tự tính chữ ký:
+- Send `status: "failed"` when PayOS reports an unsuccessful payment.
+- Optionally include `signature` if the PayOS return payload contains one; the backend will verify it.
 
-```javascript
-const crypto = require('crypto');
-const payload = JSON.stringify(body);
-const signature = crypto.createHmac('sha256', process.env.PAYOS_CHECKSUM_KEY).update(payload).digest('hex');
-```
-
-### Response mẫu
+### Sample success response
 
 ```json
 {
   "success": true,
-  "duplicate": false
+  "statusCode": 200,
+  "message": "Payment status updated",
+  "data": {
+    "requestId": "0f3c2e6bd7b74cf0bc6717b91d5ef420",
+    "paymentStatus": "completed",
+    "intentStatus": "succeeded",
+    "subscriptionId": "652c1c0d9a0f5e4b7d8c1234"
+  }
 }
 ```
 
-Webhook sẽ được enqueue và xử lý bất đồng bộ bởi worker `payment-webhook-secure-processor`.
+### Sample failed response
+
+```json
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Payment status updated",
+  "data": {
+    "requestId": "0f3c2e6bd7b74cf0bc6717b91d5ef420",
+    "paymentStatus": "failed",
+    "intentStatus": "failed"
+  }
+}
+```
 
 ---
 
-## 3. Hủy checkout thủ công (frontend gọi)
+## 3. Cancel Checkout (frontend triggered)
 
-- **Method**: `POST`
-- **URL**: `{{base_url}}/api/v1/subscriptions/checkout/cancel`
+- **Method**: `POST`  
+- **URL**: `{{base_url}}/api/v1/subscriptions/checkout/cancel`  
 - **Headers**:
   - `Authorization: Bearer {{user_access_token}}`
   - `Content-Type: application/json`
@@ -115,13 +129,11 @@ Webhook sẽ được enqueue và xử lý bất đồng bộ bởi worker `paym
 }
 ```
 
-Sau khi người dùng hủy thanh toán trên PayOS và quay về app, gọi API này với `requestId` (nhận từ checkout) để cập nhật DB ngay: intent = `cancelled`, payment = `failed`.
+Call this when the user cancels the payment on PayOS and returns to the app. The backend marks the intent as `cancelled` and the payment as `failed` immediately.
 
 ---
 
-## 4. Reconciliation (manual trigger gợi ý)
-
-Không có endpoint HTTP, nhưng bạn có thể chạy script nhỏ để gọi worker thủ công khi test:
+## 4. Reconciliation (manual trigger for tests)
 
 ```javascript
 import { reconciliationWorker } from '../src/jobs/paymentJobs.js';
@@ -129,19 +141,16 @@ import { reconciliationWorker } from '../src/jobs/paymentJobs.js';
 reconciliationWorker().then(console.log).catch(console.error);
 ```
 
-Hoặc dùng MongoDB để kiểm tra:
-
-```mongodb
-db.paymentintents.find({ status: "pending", expiresAt: { $lt: ISODate() } })
-```
+This worker expires stale payment intents and marks related payments as failed when they time out.
 
 ---
 
 ## 5. Auto-Renewal Test
 
-- Tạo subscription với `autoRenew = true` và `endDate` trong vòng 2-3 ngày tới.
-- Dùng endpoint checkout để tạo thanh toán thử, sau đó chỉnh `endDate` bằng MongoDB nếu cần.
-- Worker `subscription-auto-renewal` (03:00 Asia/Ho_Chi_Minh) sẽ tạo intent mới. Bạn có thể gọi tay:
+1. Create a subscription with `autoRenew = true` and an `endDate` within the next few days.  
+2. Trigger checkout to create an initial payment intent.  
+3. Optionally adjust `endDate` in MongoDB for quicker testing.  
+4. Run the worker manually:
 
 ```javascript
 import { autoRenewalWorker } from '../src/jobs/paymentJobs.js';
@@ -149,10 +158,12 @@ import { autoRenewalWorker } from '../src/jobs/paymentJobs.js';
 autoRenewalWorker().then(console.log).catch(console.error);
 ```
 
+The worker is also scheduled to run daily at 03:00 (Asia/Ho_Chi_Minh).
+
 ---
 
 ## Tips
 
-- Đặt `PAYOS_IP_WHITELIST` (CSV) khi deploy để hạn chế nguồn webhook.
-- `PAYMENT_METADATA_SECRET` có thể khai báo riêng để mã hóa metadata thay vì dùng `PAYOS_CHECKSUM_KEY`.
-- Kiểm tra collection `paymentwebhookevents` để đảm bảo không có event kẹt ở trạng thái `processing` (job recon sẽ tự reset sau 5 phút).
+- Keep `PAYMENT_METADATA_SECRET` (or `PAYOS_CHECKSUM_KEY`) safe so metadata encryption and signature verification remain consistent.
+- In non-production environments you can skip the signature field, but enabling it is recommended before going live.
+- Check the `paymentintents` and `payments` collections to confirm statuses after completing or cancelling a checkout.
