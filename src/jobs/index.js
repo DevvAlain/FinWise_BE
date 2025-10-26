@@ -2,6 +2,7 @@ import { initCategoryJobs } from './categoryJobs.js';
 import { initBudgetJobs } from './budgetJobs.js';
 import { initGoalJobs } from './goalJobs.js';
 import { initPaymentJobs } from './paymentJobs.js';
+import { initNotificationJobs } from './notificationJobs.js';
 
 /**
  * Initialize all background jobs
@@ -21,6 +22,9 @@ export const initBackgroundJobs = () => {
 
         // Initialize payment-related jobs
         initPaymentJobs();
+
+        // Initialize notification jobs (email sender)
+        initNotificationJobs();
 
         // TODO: Add other job types here
         // initNotificationJobs();

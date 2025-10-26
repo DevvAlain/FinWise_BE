@@ -47,14 +47,28 @@ const createMine = async (userId, payload) => {
   }
 
   try {
-    const doc = await UserExpenseCategory.create({
-      user: userId,
-      category: categoryId || null,
-      customName: customName?.trim(),
+    // Use upsert to avoid duplicate-key insertion under concurrency
+    const normalizedName = customName?.trim()?.toLowerCase();
+    const filter = normalizedName
+      ? { user: userId, normalizedName }
+      : { user: userId, category: categoryId || null };
+
+    const update = {
+      $set: {
+        user: userId,
+        category: categoryId || null,
+        customName: customName?.trim(),
+        normalizedName: normalizedName || undefined,
+      },
+      $setOnInsert: { createdAt: new Date() },
+    };
+
+    const doc = await UserExpenseCategory.findOneAndUpdate(filter, update, {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
     });
-    const created = await UserExpenseCategory.findById(doc._id).populate(
-      'category',
-    );
+    const created = await UserExpenseCategory.findById(doc._id).populate('category');
     return { success: true, statusCode: 201, item: created };
   } catch (error) {
     if (error.code === 11000) {

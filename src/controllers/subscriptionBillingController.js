@@ -26,7 +26,21 @@ const cancel = async (req, res) => {
   }
 };
 
+const complete = async (req, res) => {
+  try {
+    const result = await subscriptionBillingService.finalizeCheckout(req.user, req.body);
+    return res.status(result.statusCode || 500).json(result);
+  } catch (error) {
+    console.error('[SubscriptionBillingController] complete error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to finalize subscription checkout',
+    });
+  }
+};
+
 export default {
   checkout,
   cancel,
+  complete,
 };

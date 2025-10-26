@@ -32,13 +32,33 @@ export async function openRouterChat(
       }),
     });
 
+    const bodyText = await res.text();
+
     if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`[OpenRouter/DeepSeek] HTTP ${res.status}: ${err}`);
+      const errPayload = bodyText || res.statusText;
+      throw new Error(`[OpenRouter/DeepSeek] HTTP ${res.status}: ${errPayload}`);
     }
 
-    const data = await res.json();
+    if (!bodyText) {
+      throw new Error('[OpenRouter/DeepSeek] Empty response body');
+    }
+
+    let data;
+    try {
+      data = JSON.parse(bodyText);
+    } catch (parseError) {
+      const sample =
+        bodyText.length > 200 ? `${bodyText.slice(0, 200)}...` : bodyText;
+      throw new Error(
+        `[OpenRouter/DeepSeek] Invalid JSON response: ${sample}`,
+      );
+    }
+
     const content = data?.choices?.[0]?.message?.content || '';
+    if (!content) {
+      throw new Error('[OpenRouter/DeepSeek] Missing completion content');
+    }
+
     return content;
   } catch (error) {
     console.error('[OpenRouter/DeepSeek] Chat error:', error);

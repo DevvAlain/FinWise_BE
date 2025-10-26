@@ -8,8 +8,8 @@ import walletController from '../controllers/walletController.js';
 import categoryController from '../controllers/categoryController.js';
 import categoryAdminController from '../controllers/categoryAdminController.js';
 import subscriptionBillingController from '../controllers/subscriptionBillingController.js';
+import subscriptionController from '../controllers/subscriptionController.js';
 import adminController from '../controllers/adminController.js';
-import paymentController from '../controllers/paymentController.js';
 import {
   enforceWalletQuota,
   enforceTransactionQuota,
@@ -44,6 +44,17 @@ let initWebRoutes = (app) => {
     authController.changePassword,
   );
 
+  // v1 equivalents for auth
+  router.post('/api/v1/auth/register', authController.register);
+  router.post('/api/v1/auth/login', authController.login);
+  router.post('/api/v1/auth/google-login', authController.googleLogin);
+  router.post('/api/v1/auth/refresh-token', authController.refreshToken);
+  router.get('/api/v1/auth/verify-email/:token', authController.verifyEmail);
+  router.post('/api/v1/auth/resend-verification', authController.resendVerificationEmail);
+  router.post('/api/v1/auth/forgot-password', authController.forgotPassword);
+  router.post('/api/v1/auth/reset-password/:token', authController.resetPassword);
+  router.post('/api/v1/auth/change-password', protect, authController.changePassword);
+
   // User profile
   router.get('/api/users/me', protect, userProfileController.getMe);
   router.patch(
@@ -55,6 +66,13 @@ let initWebRoutes = (app) => {
     ]),
     userProfileController.updateMe,
   );
+
+  // v1 user profile
+  router.get('/api/v1/users/me', protect, userProfileController.getMe);
+  router.patch('/api/v1/users/me', protect, upload.fields([
+    { name: 'avatar', maxCount: 1 },
+    { name: 'image', maxCount: 1 },
+  ]), userProfileController.updateMe);
 
   // Wallets (no bank integrations)
   router.post(
@@ -69,6 +87,13 @@ let initWebRoutes = (app) => {
   router.delete('/api/wallets/:walletId', protect, walletController.remove);
   router.post('/api/v1/wallets/:walletId/sync', protect, walletController.sync);
   router.post('/api/wallets/:walletId/sync', protect, walletController.sync);
+
+  // v1 wallets
+  router.post('/api/v1/wallets', protect, enforceWalletQuota, walletController.create);
+  router.get('/api/v1/wallets', protect, walletController.list);
+  router.get('/api/v1/wallets/:walletId', protect, walletController.detail);
+  router.patch('/api/v1/wallets/:walletId', protect, walletController.update);
+  router.delete('/api/v1/wallets/:walletId', protect, walletController.remove);
 
   // Categories
   router.get('/api/categories/system', categoryController.listSystem);
@@ -91,6 +116,14 @@ let initWebRoutes = (app) => {
   router.post('/api/v1/categories/suggestions/:suggestionId/reject', protect, categoryController.rejectSuggestion);
   router.post('/api/categories/suggestions/:suggestionId/reject', protect, categoryController.rejectSuggestion);
 
+  // v1 categories
+  router.get('/api/v1/categories/system', categoryController.listSystem);
+  router.get('/api/v1/categories', protect, categoryController.listMine);
+  router.post('/api/v1/categories', protect, categoryController.createMine);
+  router.patch('/api/v1/categories/:categoryId', protect, categoryController.updateMine);
+  router.delete('/api/v1/categories/:categoryId', protect, categoryController.deleteMine);
+  router.get('/api/v1/categories/suggestions', protect, categoryController.listSuggestions);
+
   // Admin: System categories
   router.post(
     '/api/admin/categories/system',
@@ -111,12 +144,31 @@ let initWebRoutes = (app) => {
     categoryAdminController.remove,
   );
 
+  // v1 admin system categories
+  router.post('/api/v1/admin/categories/system', protect, authorize('admin'), categoryAdminController.create);
+  router.patch('/api/v1/admin/categories/system/:categoryId', protect, authorize('admin'), categoryAdminController.update);
+  router.delete('/api/v1/admin/categories/system/:categoryId', protect, authorize('admin'), categoryAdminController.remove);
+
   // Admin: Metrics dashboard
   router.get(
     '/api/v1/admin/metrics/overview',
     protect,
     authorize('admin'),
     adminController.getMetricsOverview,
+  );
+
+  router.get(
+    '/api/v1/admin/payments/transfer-summary',
+    protect,
+    authorize('admin'),
+    adminController.getTransferSummary,
+  );
+
+  router.get(
+    '/api/v1/admin/payments/transfer-history',
+    protect,
+    authorize('admin'),
+    adminController.getTransferHistory,
   );
 
   // Admin: Subscription plans
@@ -148,13 +200,18 @@ let initWebRoutes = (app) => {
     subscriptionBillingController.checkout,
   );
   router.post(
+    '/api/v1/subscriptions/checkout/complete',
+    protect,
+    subscriptionBillingController.complete,
+  );
+  router.post(
     '/api/v1/subscriptions/checkout/cancel',
     protect,
     subscriptionBillingController.cancel,
   );
 
-  // Payment provider webhooks
-  router.post('/api/v1/payments/webhook/:provider', paymentController.handleWebhook);
+  // Mobile helper: get current active subscription
+  router.get('/api/v1/subscriptions/active', protect, subscriptionController.active);
 
   // Transactions
   router.post(
@@ -174,6 +231,12 @@ let initWebRoutes = (app) => {
   router.get('/api/transactions/:id', protect, transactionController.detail);
   router.patch('/api/transactions/:id', protect, transactionController.update);
   router.delete('/api/transactions/:id', protect, transactionController.remove);
+
+  // v1 transactions (list/detail/update/delete)
+  router.get('/api/v1/transactions', protect, transactionController.list);
+  router.get('/api/v1/transactions/:id', protect, transactionController.detail);
+  router.patch('/api/v1/transactions/:id', protect, transactionController.update);
+  router.delete('/api/v1/transactions/:id', protect, transactionController.remove);
 
   // Budgets - Enhanced API v1
   router.post(
@@ -198,6 +261,9 @@ let initWebRoutes = (app) => {
   router.patch('/api/budgets/:id', protect, budgetController.update);
   router.delete('/api/budgets/:id', protect, budgetController.remove);
   router.get('/api/budgets/status', protect, budgetController.getStatus);
+
+  // v1 budgets/status if needed
+  router.get('/api/v1/budgets/status', protect, budgetController.getStatus);
 
   // Saving Goals - Enhanced API v1
   router.post(
@@ -242,6 +308,10 @@ let initWebRoutes = (app) => {
     rateLimit({ windowMs: 60_000, max: 30 }),
     aiController.qa,
   );
+
+  // v1 AI parse/qa
+  router.post('/api/v1/ai/parse-expense', protect, rateLimit({ windowMs: 60_000, max: 30 }), aiController.parseExpense);
+  router.post('/api/v1/ai/qa', protect, rateLimit({ windowMs: 60_000, max: 30 }), aiController.qa);
   router.post(
     '/api/v1/ai/transactions/parse',
     protect,
@@ -264,6 +334,10 @@ let initWebRoutes = (app) => {
     notificationController.markRead,
   );
 
+  // v1 notifications
+  router.get('/api/v1/notifications', protect, notificationController.list);
+  router.patch('/api/v1/notifications/:id/read', protect, notificationController.markRead);
+
   // Reports (basic)
   router.get(
     '/api/reports/spend-by-category',
@@ -275,6 +349,10 @@ let initWebRoutes = (app) => {
     protect,
     reportController.monthlyTrend,
   );
+
+  // v1 reports
+  router.get('/api/v1/reports/spend-by-category', protect, reportController.spendByCategory);
+  router.get('/api/v1/reports/monthly-trend', protect, reportController.monthlyTrend);
 
   return app.use('/', router);
 };

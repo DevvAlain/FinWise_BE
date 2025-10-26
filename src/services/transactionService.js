@@ -3,7 +3,29 @@ import Transaction from '../models/transaction.js';
 import Wallet from '../models/wallet.js';
 import { ensureUsage } from '../middleware/quotaMiddleware.js';
 import { publishDomainEvents } from '../events/domainEvents.js';
+import { sendTransactionCreatedEmail } from '../services/emailService.js';
+import User from '../models/user.js';
 import { resolveCategory } from './categoryResolutionService.js';
+import { recalculateBudgetsForTransaction } from './budgetService.js';
+
+// Wrap resolveCategory to handle rare E11000 duplicate-key races when
+// two concurrent processes try to create the same user category. In that
+// case we catch the error and fallback to returning no category so the
+// transaction can still be created; the calling flow can later refresh
+// and pick up the created category.
+const safeResolveCategory = async (userId, opts) => {
+  try {
+    return await resolveCategory(userId, opts);
+  } catch (err) {
+    const msg = (err && err.message) ? err.message : '';
+    const isDup = /E11000|duplicate key|normalizedName/i.test(msg);
+    if (isDup) {
+      console.warn('[Category] Duplicate-key race when resolving category, falling back to no-category for transaction', { userId, opts });
+      return { categoryId: null, needsConfirmation: false };
+    }
+    throw err;
+  }
+};
 
 const decimalToNumber = (value) => {
   if (value === null || value === undefined) return 0;
@@ -56,19 +78,67 @@ const create = async (userId, payload) => {
   }
 
   let categoryResolution = { categoryId: category || null, needsConfirmation: false };
-  if (categoryResolution.categoryId) {
-    categoryResolution = await resolveCategory(userId, {
-      categoryId: categoryResolution.categoryId,
-    });
-    if (!categoryResolution.categoryId) {
+  try {
+    if (categoryResolution.categoryId) {
+      categoryResolution = await safeResolveCategory(userId, {
+        categoryId: categoryResolution.categoryId,
+      });
+      if (!categoryResolution.categoryId) {
+        return {
+          success: false,
+          statusCode: 404,
+          message: 'Không tìm thấy danh mục',
+        };
+      }
+    } else if (categoryName) {
+      categoryResolution = await safeResolveCategory(userId, { categoryName });
+
+      // If resolver indicates the category needs confirmation, return a
+      // handled response so callers (AI/chat) can show a confirmation UI
+      // instead of letting an exception propagate.
+      if (categoryResolution && categoryResolution.needsConfirmation) {
+        return {
+          success: false,
+          statusCode: 422,
+          data: {
+            walletId: walletId || wallet || null,
+            type,
+            amount,
+            currency,
+            categoryName,
+            occurredAt,
+            description,
+            suggestedCategory: categoryResolution.suggestion || null,
+          },
+          needsConfirmation: true,
+          message: 'Can xac nhan danh muc truoc khi tao giao dich',
+        };
+      }
+    }
+  } catch (err) {
+    // Some implementations of the category resolver may throw an Error when
+    // a confirmation is required. Catch that specific case and convert it to
+    // the same structured response the AI flow expects.
+    const msg = (err && err.message) ? err.message : '';
+    if (/xac nhan danh muc|Can xac nhan|Cần xác nhận danh mục/i.test(msg)) {
       return {
         success: false,
-        statusCode: 404,
-        message: 'Không tìm thấy danh mục',
+        statusCode: 422,
+        data: {
+          walletId: walletId || wallet || null,
+          type,
+          amount,
+          currency,
+          categoryName,
+          occurredAt,
+          description,
+          suggestedCategory: (err && err.suggestion) || null,
+        },
+        needsConfirmation: true,
+        message: 'Can xac nhan danh muc truoc khi tao giao dich',
       };
     }
-  } else if (categoryName) {
-    categoryResolution = await resolveCategory(userId, { categoryName });
+    throw err;
   }
 
   const resolvedCategoryId = categoryResolution.categoryId || null;
@@ -256,6 +326,52 @@ const create = async (userId, payload) => {
 
   if (createdTransaction) {
     await publishDomainEvents(eventsToPublish);
+    const budgetsUpdated = await recalculateBudgetsForTransaction(userId, createdTransaction);
+
+    // If transaction was created by AI/chat flow, send an email notification to the user.
+    // We don't want to block the main response on email delivery, so run it async and log failures.
+    try {
+      if (createdTransaction.inputMethod === 'ai_assisted' || createdTransaction.inputMethod === 'ai') {
+        // Resolve a recipient email deterministically before calling the email helper
+        // to avoid the helper throwing when no recipient is found.
+        let userEmail = null;
+        let userName = '';
+
+        if (createdTransaction.userEmail) {
+          userEmail = createdTransaction.userEmail;
+        } else if (createdTransaction.user && createdTransaction.user.email) {
+          userEmail = createdTransaction.user.email;
+          userName = createdTransaction.user.fullName || '';
+        } else if (createdTransaction.user) {
+          // If transaction.user holds an id, try loading the user
+          try {
+            const u = await User.findById(createdTransaction.user).select('email fullName');
+            if (u && u.email) {
+              userEmail = u.email;
+              userName = u.fullName || '';
+            }
+          } catch (e) {
+            // ignore user lookup failures and continue to fallback
+          }
+        }
+
+        // Final fallback to DEBUG_USER_EMAIL env var if set
+        if (!userEmail && process.env.DEBUG_USER_EMAIL) userEmail = process.env.DEBUG_USER_EMAIL;
+
+        if (!userEmail) {
+          console.warn('[Email] Skipping transaction-created email: no recipient email available for transaction', { transactionId: createdTransaction._id });
+        } else {
+          // fire-and-forget using named export (avoid default export timing issues)
+          sendTransactionCreatedEmail(userEmail, userName, createdTransaction).then((res) => {
+            if (!res || !res.success) console.warn('[Email] Transaction-created email was not sent', res);
+          }).catch((err) => {
+            console.error('[Email] Error sending transaction-created email:', err);
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[Email] Unexpected error when attempting to send transaction email:', err);
+    }
 
     const balances = Object.entries(updatedBalances).map(
       ([walletIdValue, balanceValue]) => ({
@@ -274,6 +390,7 @@ const create = async (userId, payload) => {
       needsCategoryConfirmation,
       categorySuggestion,
       matchedSource: categoryMatchedSource,
+      budgetsUpdated,
     };
   }
 

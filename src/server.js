@@ -6,6 +6,7 @@ import connectDB from './config/conectDB.js';
 import viewEngine from './config/viewEngine';
 import initWebRoutes from './route/web.js';
 import { initBackgroundJobs } from './jobs/index.js'; // 🆕 ADD MISSING IMPORT
+import { publishDomainEvents } from './events/domainEvents.js';
 
 dotenv.config(); // Load biến môi trường từ .env
 
@@ -35,6 +36,22 @@ connectDB(); // Kết nối MongoDB thay vì MySQL
 
 // 🆕 Initialize background jobs after database connection
 initBackgroundJobs();
+
+// Dev-only endpoint to publish test events (protected by DEV_TEST_SECRET)
+app.post('/__dev/publish-test-events', async (req, res) => {
+  try {
+    const secret = req.headers['x-dev-secret'] || req.query.secret;
+    if (!process.env.DEV_TEST_SECRET || secret !== process.env.DEV_TEST_SECRET) {
+      return res.status(403).json({ success: false, message: 'Forbidden' });
+    }
+    const events = req.body.events || [];
+    await publishDomainEvents(events);
+    return res.json({ success: true, published: events.length });
+  } catch (e) {
+    console.error('__dev publish error', e);
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
