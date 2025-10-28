@@ -1,54 +1,8 @@
 const mongoose = require('mongoose');
 
-const PaymentStatusHistorySchema = new mongoose.Schema(
-  {
-    status: {
-      type: String,
-      enum: ['pending', 'completed', 'failed', 'refunded', 'voided'],
-      required: true,
-    },
-    reason: {
-      type: String,
-      maxlength: 255,
-    },
-    metadata: {
-      type: mongoose.Schema.Types.Mixed,
-    },
-    changedAt: {
-      type: Date,
-      default: Date.now,
-    },
-  },
-  { _id: false },
-);
-
-const PaymentWebhookLogSchema = new mongoose.Schema(
-  {
-    providerEvent: {
-      type: String,
-      maxlength: 100,
-    },
-    payload: {
-      type: mongoose.Schema.Types.Mixed,
-    },
-    receivedAt: {
-      type: Date,
-      default: Date.now,
-    },
-    processedAt: {
-      type: Date,
-    },
-    responseCode: {
-      type: String,
-      maxlength: 30,
-    },
-    errorMessage: {
-      type: String,
-      maxlength: 500,
-    },
-  },
-  { _id: false },
-);
+const PaymentStatusHistorySchema = require('./PaymentStatusHistorySchema');
+const PaymentWebhookLogSchema = require('./PaymentWebhookLogSchema');
+const PaymentReviewSchema = require('./PaymentReviewSchema');
 
 const PaymentSchema = new mongoose.Schema(
   {
@@ -145,9 +99,13 @@ const PaymentSchema = new mongoose.Schema(
     lockedAt: {
       type: Date,
     },
+    review: {
+      type: PaymentReviewSchema,
+      default: null,
+    },
   },
   {
-    timestamps: true, // t?o createdAt & updatedAt
+    timestamps: true, // tạo createdAt & updatedAt
   },
 );
 

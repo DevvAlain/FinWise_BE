@@ -1,4 +1,5 @@
-﻿import express from 'express';
+﻿
+import express from 'express';
 // import userController from "../controllers/userController";
 import authController from '../controllers/authController';
 import { protect, authorize } from '../middleware/authMiddleware.js';
@@ -23,10 +24,19 @@ import aiController from '../controllers/aiController.js';
 import { rateLimit } from '../middleware/rateLimitMiddleware.js';
 import notificationController from '../controllers/notificationController.js';
 import reportController from '../controllers/reportController.js';
+import adminUserController from '../controllers/adminUserController.js';
+
 
 let router = express.Router();
 
 let initWebRoutes = (app) => {
+  // Admin user management
+  router.get('/api/v1/admin/users', protect, authorize('admin'), adminUserController.listUsers);
+  router.get('/api/v1/admin/users/:id', protect, authorize('admin'), adminUserController.getUserDetail);
+  router.patch('/api/v1/admin/users/:id', protect, authorize('admin'), adminUserController.updateUser);
+  router.patch('/api/v1/admin/users/:id/lock', protect, authorize('admin'), adminUserController.lockUser);
+  router.patch('/api/v1/admin/users/:id/unlock', protect, authorize('admin'), adminUserController.unlockUser);
+  router.delete('/api/v1/admin/users/:id', protect, authorize('admin'), adminUserController.deleteUser);
   router.post('/api/auth/register', authController.register);
   router.post('/api/auth/login', authController.login);
   router.post('/api/auth/google-login', authController.googleLogin);
@@ -156,6 +166,11 @@ let initWebRoutes = (app) => {
     authorize('admin'),
     adminController.getMetricsOverview,
   );
+  // Review payment (feedback)
+  router.post(
+    '/api/v1/payments/:paymentId/review',
+    require('../controllers/paymentController.js').default.reviewPayment,
+  );
 
   router.get(
     '/api/v1/admin/payments/transfer-summary',
@@ -171,6 +186,28 @@ let initWebRoutes = (app) => {
     adminController.getTransferHistory,
   );
 
+  // Admin: Reviews dashboard (list / detail / delete)
+  router.get(
+    '/api/v1/admin/reviews',
+    protect,
+    authorize('admin'),
+    adminController.listReviews,
+  );
+
+  router.get(
+    '/api/v1/admin/reviews/:paymentId',
+    protect,
+    authorize('admin'),
+    adminController.getReview,
+  );
+
+  router.delete(
+    '/api/v1/admin/reviews/:paymentId',
+    protect,
+    authorize('admin'),
+    adminController.deleteReview,
+  );
+
   // Admin: Subscription plans
   router.post(
     '/api/v1/admin/plans',
@@ -183,6 +220,25 @@ let initWebRoutes = (app) => {
     protect,
     authorize('admin'),
     adminController.updatePlan,
+  );
+  // Thêm các route GET và DELETE cho quản lý subscription plans
+  router.get(
+    '/api/v1/admin/plans',
+    protect,
+    authorize('admin'),
+    adminController.getPlans,
+  );
+  router.get(
+    '/api/v1/admin/plans/:planId',
+    protect,
+    authorize('admin'),
+    adminController.getPlanDetail,
+  );
+  router.delete(
+    '/api/v1/admin/plans/:planId',
+    protect,
+    authorize('admin'),
+    adminController.deletePlan,
   );
 
   // Admin: Sync logs monitoring
