@@ -2,8 +2,8 @@ import mongoose from 'mongoose';
 import Payment from '../models/payment.js';
 
 const DEFAULT_TIMEZONE = 'Asia/Ho_Chi_Minh';
-const SUCCESS_STATUSES = ['completed'];
-const BANK_TRANSFER_METHOD = 'bank_transfer';
+const SUCCESS_STATUSES = ['completed', 'succeeded'];
+const SUPPORTED_METHODS = ['bank_transfer', 'payos_qr', 'payos', 'momo', 'zalopay', 'stripe'];
 
 const parseDate = (value) => {
   if (!value) return null;
@@ -22,17 +22,21 @@ const decimalToNumber = (value) => {
 };
 
 const buildBaseMatch = ({
-  paymentMethod = BANK_TRANSFER_METHOD,
+  paymentMethods = SUPPORTED_METHODS,
   statuses = SUCCESS_STATUSES,
 }) => {
   const match = {};
 
   if (Array.isArray(statuses) && statuses.length > 0) {
-    match.paymentStatus = { $in: statuses };
+    // Match either 'status' or 'paymentStatus' field
+    match.$or = [
+      { status: { $in: statuses } },
+      { paymentStatus: { $in: statuses } },
+    ];
   }
 
-  if (paymentMethod) {
-    match.paymentMethod = paymentMethod;
+  if (Array.isArray(paymentMethods) && paymentMethods.length > 0) {
+    match.paymentMethod = { $in: paymentMethods };
   }
 
   return match;
