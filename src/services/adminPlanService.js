@@ -186,7 +186,81 @@ const updatePlan = async (planId, payload) => {
   }
 };
 
+const getPlans = async () => {
+  try {
+    const plans = await SubscriptionPlan.find();
+    return { success: true, statusCode: 200, items: plans };
+  } catch (error) {
+    console.error('[AdminPlanService] getPlans error:', error);
+    return {
+      success: false,
+      statusCode: 500,
+      message: 'Unable to fetch subscription plans',
+    };
+  }
+};
+
+const getPlanDetail = async (planId) => {
+  if (!planId || !Types.ObjectId.isValid(planId)) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: 'Invalid plan id',
+    };
+  }
+  try {
+    const plan = await SubscriptionPlan.findById(planId);
+    if (!plan) {
+      return {
+        success: false,
+        statusCode: 404,
+        message: 'Subscription plan not found',
+      };
+    }
+    return { success: true, statusCode: 200, item: plan };
+  } catch (error) {
+    console.error('[AdminPlanService] getPlanDetail error:', error);
+    return {
+      success: false,
+      statusCode: 500,
+      message: 'Unable to fetch subscription plan detail',
+    };
+  }
+};
+
+const deletePlan = async (planId) => {
+  if (!planId || !Types.ObjectId.isValid(planId)) {
+    return {
+      success: false,
+      statusCode: 400,
+      message: 'Invalid plan id',
+    };
+  }
+  try {
+    const plan = await SubscriptionPlan.findByIdAndDelete(planId);
+    if (!plan) {
+      return {
+        success: false,
+        statusCode: 404,
+        message: 'Subscription plan not found',
+      };
+    }
+    await invalidateOverviewCache();
+    return { success: true, statusCode: 200, item: plan };
+  } catch (error) {
+    console.error('[AdminPlanService] deletePlan error:', error);
+    return {
+      success: false,
+      statusCode: 500,
+      message: 'Unable to delete subscription plan',
+    };
+  }
+};
+
 export default {
   createPlan,
   updatePlan,
+  getPlans,
+  getPlanDetail,
+  deletePlan,
 };
