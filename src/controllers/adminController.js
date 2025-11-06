@@ -154,31 +154,169 @@ const listReviews = async (req, res) => {
       filter.provider = req.query.provider;
     }
 
-    const [total, payments] = await Promise.all([
+    // Parallel queries for data + statistics
+    const [total, payments, statistics] = await Promise.all([
       Payment.countDocuments(filter),
       Payment.find(filter)
-        .select('user provider transactionId providerTransactionId providerRequestId review paidAt amount currency')
+        .select('user provider transactionId providerTransactionId providerRequestId review paidAt amount currency paymentStatus')
         .sort({ 'review.createdAt': -1 })
         .skip(skip)
         .limit(limit)
+        .populate('user', 'fullName email username')
         .lean(),
+      // Statistics aggregation
+      Payment.aggregate([
+        { $match: { review: { $ne: null } } },
+        {
+          $facet: {
+            // Rating distribution
+            ratingDistribution: [
+              { $group: { _id: '$review.rating', count: { $sum: 1 } } },
+              { $sort: { _id: 1 } },
+            ],
+            // Provider breakdown
+            providerBreakdown: [
+              { $group: { _id: '$provider', count: { $sum: 1 }, avgRating: { $avg: '$review.rating' } } },
+              { $sort: { count: -1 } },
+            ],
+            // Average rating
+            averageRating: [
+              { $group: { _id: null, avgRating: { $avg: '$review.rating' }, totalReviews: { $sum: 1 } } },
+            ],
+            // Recent trend (last 7 days vs previous 7 days)
+            recentTrend: [
+              {
+                $addFields: {
+                  daysSinceReview: {
+                    $divide: [
+                      { $subtract: [new Date(), '$review.createdAt'] },
+                      1000 * 60 * 60 * 24,
+                    ],
+                  },
+                },
+              },
+              {
+                $bucket: {
+                  groupBy: '$daysSinceReview',
+                  boundaries: [0, 7, 14, 30, 90, 9999],
+                  default: 'older',
+                  output: {
+                    count: { $sum: 1 },
+                    avgRating: { $avg: '$review.rating' },
+                  },
+                },
+              },
+            ],
+            // Rating sentiment (positive/neutral/negative)
+            sentiment: [
+              {
+                $addFields: {
+                  sentiment: {
+                    $switch: {
+                      branches: [
+                        { case: { $gte: ['$review.rating', 4] }, then: 'positive' },
+                        { case: { $lte: ['$review.rating', 2] }, then: 'negative' },
+                      ],
+                      default: 'neutral',
+                    },
+                  },
+                },
+              },
+              { $group: { _id: '$sentiment', count: { $sum: 1 } } },
+            ],
+          },
+        },
+      ]),
     ]);
+
+    // Process statistics
+    const stats = statistics[0] || {};
+    const ratingDistribution = {};
+    [1, 2, 3, 4, 5].forEach((r) => (ratingDistribution[r] = 0));
+    (stats.ratingDistribution || []).forEach((item) => {
+      if (item._id >= 1 && item._id <= 5) ratingDistribution[item._id] = item.count;
+    });
+
+    const providerBreakdown = (stats.providerBreakdown || []).map((p) => ({
+      provider: p._id || 'unknown',
+      count: p.count,
+      avgRating: Math.round((p.avgRating || 0) * 10) / 10,
+    }));
+
+    const overallStats = stats.averageRating?.[0] || {};
+    const avgRating = Math.round((overallStats.avgRating || 0) * 10) / 10;
+    const totalReviews = overallStats.totalReviews || 0;
+
+    const trendBuckets = stats.recentTrend || [];
+    const last7Days = trendBuckets.find((b) => b._id === 0) || { count: 0, avgRating: 0 };
+    const prev7Days = trendBuckets.find((b) => b._id === 7) || { count: 0, avgRating: 0 };
+
+    const sentimentData = {};
+    ['positive', 'neutral', 'negative'].forEach((s) => (sentimentData[s] = 0));
+    (stats.sentiment || []).forEach((item) => {
+      if (item._id) sentimentData[item._id] = item.count;
+    });
+
+    const sentimentPercentages = {
+      positive: totalReviews > 0 ? Math.round((sentimentData.positive / totalReviews) * 100) : 0,
+      neutral: totalReviews > 0 ? Math.round((sentimentData.neutral / totalReviews) * 100) : 0,
+      negative: totalReviews > 0 ? Math.round((sentimentData.negative / totalReviews) * 100) : 0,
+    };
 
     return res.status(200).json({
       success: true,
       data: {
-        total,
-        page,
-        limit,
+        // Summary statistics (dashboard style)
+        summary: {
+          totalReviews,
+          averageRating: avgRating,
+          ratingDistribution,
+          sentiment: {
+            counts: sentimentData,
+            percentages: sentimentPercentages,
+          },
+          trend: {
+            last7Days: {
+              count: last7Days.count,
+              avgRating: Math.round((last7Days.avgRating || 0) * 10) / 10,
+            },
+            previous7Days: {
+              count: prev7Days.count,
+              avgRating: Math.round((prev7Days.avgRating || 0) * 10) / 10,
+            },
+            change: last7Days.count - prev7Days.count,
+          },
+          providerBreakdown,
+        },
+        // Pagination info
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+        // Review items
         items: payments.map((p) => ({
           paymentId: p._id,
-          user: p.user,
+          user: p.user
+            ? {
+              id: p.user._id,
+              name: p.user.fullName || p.user.username,
+              email: p.user.email,
+            }
+            : null,
           provider: p.provider,
           transactionId: p.transactionId || p.providerTransactionId || p.providerRequestId,
           amount: p.amount,
           currency: p.currency,
+          paymentStatus: p.paymentStatus,
           paidAt: p.paidAt,
-          review: p.review,
+          review: {
+            rating: p.review.rating,
+            content: p.review.content,
+            createdAt: p.review.createdAt,
+            user: p.review.user,
+          },
         })),
       },
     });
