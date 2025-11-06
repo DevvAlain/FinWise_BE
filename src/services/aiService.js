@@ -45,7 +45,7 @@ const ADVANCED_MODEL =
 const FAST_MODEL =
   process.env.OPENROUTER_MODEL_FAST ||
   process.env.OPENROUTER_MODEL ||
-  'deepseek/deepseek-chat-v3-0324:free';
+  'tngtech/deepseek-r1t-chimera:free';
 
 const AI_CHAT_SYSTEM_PROMPT = `Bạn là trợ lý tài chính cá nhân cho người dùng Việt Nam.
 - Hiểu và trả lời bằng tiếng Việt thân thiện, súc tích.
