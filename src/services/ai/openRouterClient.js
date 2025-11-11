@@ -54,9 +54,29 @@ export async function openRouterChat(
       );
     }
 
-    const content = data?.choices?.[0]?.message?.content || '';
-    if (!content) {
-      throw new Error('[OpenRouter/DeepSeek] Missing completion content');
+    // Handle various response formats from different models
+    const content = data?.choices?.[0]?.message?.content;
+
+    // Some models may return null or empty string
+    if (content === null || content === undefined) {
+      console.warn('[OpenRouter] Model returned null/undefined content. Response:', JSON.stringify(data).slice(0, 300));
+      // Check for error in response
+      if (data?.error) {
+        throw new Error(`[OpenRouter] API Error: ${JSON.stringify(data.error)}`);
+      }
+      // Return a fallback message instead of throwing
+      return 'Xin lỗi, tôi không thể xử lý câu hỏi này lúc này. Vui lòng thử lại.';
+    }
+
+    if (typeof content !== 'string') {
+      console.warn('[OpenRouter] Content is not a string:', typeof content, content);
+      return String(content || '');
+    }
+
+    // Some models return empty string - handle gracefully
+    if (content.trim() === '') {
+      console.warn('[OpenRouter] Model returned empty string content');
+      return 'Xin lỗi, tôi không thể tạo câu trả lời. Vui lòng thử câu hỏi khác.';
     }
 
     return content;
