@@ -1150,6 +1150,46 @@ export const chat = async (userId, payload = {}) => {
   const answerText = parsed.answer || rawResponse;
   await updateConversationMessages(conversation, question, answerText);
 
+  // Ensure we never save empty content to avoid validation errors
+  if (!answerText || answerText.trim() === '') {
+    console.error('[AI] Empty answer generated, using fallback');
+    const fallbackAnswer = lang === 'en'
+      ? 'I apologize, I could not generate a proper response. Please try rephrasing your question.'
+      : 'Xin lỗi, tôi không thể tạo câu trả lời phù hợp. Vui lòng diễn đạt lại câu hỏi.';
+
+    await updateConversationMessages(conversation, question, fallbackAnswer);
+
+    return {
+      success: true,
+      statusCode: 200,
+      data: {
+        conversationId: effectiveConversationId,
+        answer: fallbackAnswer,
+        confidence: 0.3,
+        recommendations: [],
+        visualizations: [],
+        followUpQuestions: [],
+        relatedFeatures: [],
+        disclaimers: [lang === 'en' ? disclaimerEn : disclaimerVi],
+        intent,
+        model: recommendedModel,
+        language: lang,
+        usage: {
+          monthlyLimit: quota.limit ?? null,
+          used: quota.usageCount,
+          warnings: quota.warnings || [],
+        },
+        metadata: {
+          intentConfidence,
+          complexity,
+          latencyMs,
+          language: lang,
+          error: 'Empty response from AI model',
+        },
+      },
+    };
+  }
+
   await logAiAudit(userId, 'ai_chat_exchange', {
     conversationId: effectiveConversationId,
     question,
