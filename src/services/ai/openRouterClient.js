@@ -1,5 +1,5 @@
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'tngtech/deepseek-r1t-chimera:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-r1-0528:free';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE = process.env.OPENROUTER_SITE || 'http://localhost';
 const OPENROUTER_TITLE = process.env.OPENROUTER_TITLE || 'BE_NVIDIA';
