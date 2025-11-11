@@ -45,7 +45,7 @@ const ADVANCED_MODEL =
 const FAST_MODEL =
   process.env.OPENROUTER_MODEL_FAST ||
   process.env.OPENROUTER_MODEL ||
-  'deepseek/deepseek-r1-0528:free';
+  'z-ai/glm-4.5-air:free';
 
 // Dynamic system prompt builder to support multi-language simple responses
 const buildChatSystemPrompt = (lang = 'vi') => {
