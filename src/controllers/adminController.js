@@ -158,7 +158,7 @@ const listReviews = async (req, res) => {
     const [total, payments, statistics] = await Promise.all([
       Payment.countDocuments(filter),
       Payment.find(filter)
-        .select('user provider transactionId providerTransactionId providerRequestId review paidAt amount currency paymentStatus')
+        .select('user provider transactionId providerTransactionId providerRequestId review paidAt amount currency paymentStatus createdAt updatedAt')
         .sort({ 'review.createdAt': -1 })
         .skip(skip)
         .limit(limit)
@@ -310,7 +310,9 @@ const listReviews = async (req, res) => {
           amount: p.amount,
           currency: p.currency,
           paymentStatus: p.paymentStatus,
+          createdAt: p.createdAt,
           paidAt: p.paidAt,
+          updatedAt: p.updatedAt,
           review: {
             rating: p.review.rating,
             content: p.review.content,

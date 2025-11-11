@@ -83,7 +83,48 @@ export const getTransferSummary = async ({ startDate, endDate } = {}) => {
     },
   ];
 
-  const [result] = await Payment.aggregate(pipeline);
+  // Also get recent transactions with user info for summary
+  const recentPipeline = [
+    { $match: baseMatch },
+    {
+      $addFields: {
+        effectivePaidAt: {
+          $ifNull: ['$paidAt', '$createdAt'],
+        },
+      },
+    },
+    ...(dateMatch ? [{ $match: dateMatch }] : []),
+    { $sort: { effectivePaidAt: -1 } },
+    { $limit: 10 }, // top 10 recent for summary
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'user',
+        foreignField: '_id',
+        as: 'userInfo',
+      },
+    },
+    {
+      $project: {
+        _id: 1,
+        userInfo: { $arrayElemAt: ['$userInfo', 0] },
+        transactionId: 1,
+        providerTransactionId: 1,
+        providerRequestId: 1,
+        provider: 1,
+        amount: 1,
+        currency: 1,
+        paymentStatus: 1,
+        paidAt: 1,
+        createdAt: 1,
+      },
+    },
+  ];
+
+  const [result, recentTransactions] = await Promise.all([
+    Payment.aggregate(pipeline).then(res => res[0]),
+    Payment.aggregate(recentPipeline),
+  ]);
 
   return {
     range: {
@@ -93,6 +134,23 @@ export const getTransferSummary = async ({ startDate, endDate } = {}) => {
     currency: 'VND',
     totalRevenue: decimalToNumber(result?.totalAmount ?? 0),
     transactionCount: result?.count ?? 0,
+    recentTransactions: recentTransactions.map((item) => ({
+      paymentId: item._id,
+      user: item.userInfo
+        ? {
+          id: item.userInfo._id,
+          name: item.userInfo.fullName || item.userInfo.username || item.userInfo.email,
+          email: item.userInfo.email,
+        }
+        : null,
+      transactionId: item.transactionId || item.providerTransactionId || item.providerRequestId || null,
+      provider: item.provider,
+      amount: decimalToNumber(item.amount),
+      currency: item.currency || 'VND',
+      status: item.paymentStatus,
+      createdAt: item.createdAt,
+      paidAt: item.paidAt,
+    })),
   };
 };
 
@@ -154,6 +212,49 @@ export const getTransferHistory = async ({
 
   const docs = await Payment.aggregate(pipeline);
 
+  // Also get detailed payment items with timestamps for admin dashboard
+  const itemsPipeline = [
+    { $match: baseMatch },
+    {
+      $addFields: {
+        effectivePaidAt: {
+          $ifNull: ['$paidAt', '$createdAt'],
+        },
+      },
+    },
+    ...(dateMatch ? [{ $match: dateMatch }] : []),
+    { $sort: { effectivePaidAt: -1 } },
+    { $limit: 100 }, // reasonable limit for dashboard
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'user',
+        foreignField: '_id',
+        as: 'userInfo',
+      },
+    },
+    {
+      $project: {
+        _id: 1,
+        user: 1,
+        userInfo: { $arrayElemAt: ['$userInfo', 0] },
+        transactionId: 1,
+        providerRequestId: 1,
+        providerTransactionId: 1,
+        provider: 1,
+        paymentMethod: 1,
+        amount: 1,
+        currency: 1,
+        paymentStatus: 1,
+        paidAt: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    },
+  ];
+
+  const items = await Payment.aggregate(itemsPipeline);
+
   return {
     range: {
       start: parseDate(startDate)?.toISOString() ?? null,
@@ -165,6 +266,26 @@ export const getTransferHistory = async ({
       period: doc.period,
       totalRevenue: decimalToNumber(doc.totalRevenue),
       transactionCount: doc.transactionCount ?? 0,
+    })),
+    // Add detailed items with all timestamps
+    items: items.map((item) => ({
+      paymentId: item._id,
+      user: item.userInfo
+        ? {
+          id: item.userInfo._id,
+          name: item.userInfo.fullName || item.userInfo.username || item.userInfo.email,
+          email: item.userInfo.email,
+        }
+        : null,
+      transactionId: item.transactionId || item.providerTransactionId || item.providerRequestId || null,
+      provider: item.provider,
+      paymentMethod: item.paymentMethod,
+      amount: decimalToNumber(item.amount),
+      currency: item.currency || 'VND',
+      status: item.paymentStatus,
+      createdAt: item.createdAt,
+      paidAt: item.paidAt,
+      updatedAt: item.updatedAt,
     })),
   };
 };

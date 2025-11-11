@@ -47,24 +47,41 @@ const FAST_MODEL =
   process.env.OPENROUTER_MODEL ||
   'tngtech/deepseek-r1t-chimera:free';
 
-const AI_CHAT_SYSTEM_PROMPT = `Bạn là trợ lý tài chính cá nhân cho người dùng Việt Nam.
-- Hiểu và trả lời bằng tiếng Việt thân thiện, súc tích.
-- Chỉ sử dụng dữ liệu được cung cấp trong ngữ cảnh (context) và lịch sử hội thoại.
-- Không bịa thông tin, luôn nêu rõ giả định nếu có.
-- Nếu câu hỏi vượt phạm vi hoặc cần chuyên gia, khuyên người dùng liên hệ chuyên gia.
-- Luôn trả kết quả dạng JSON với cấu trúc:
+// Dynamic system prompt builder to support multi-language simple responses
+const buildChatSystemPrompt = (lang = 'vi') => {
+  if (lang === 'en') {
+    return `You are a concise personal finance assistant.
+- Always reply in clear, simple English.
+- Use ONLY provided context & conversation history. Do not invent data.
+- Keep answers max 2 short sentences.
+- Return JSON:
 {
   "answer": string,
   "confidence": number (0..1),
   "recommendations": string[],
-  "visualizations": string[],
   "followUpQuestions": string[],
-  "relatedFeatures": string[],
   "disclaimers": string[]
 }
-- Nếu không chắc chắn, đặt confidence <= 0.6 và giải thích.
-- Với khuyến nghị, nêu rõ hành động cụ thể; tối đa 3 mục.
-- Nếu cần hiển thị biểu đồ, mô tả ngắn gọn (ví dụ: "Biểu đồ cột: Chi tiêu theo danh mục").`;
+- recommendations: max 2; followUpQuestions: max 2.
+- If uncertain set confidence <= 0.6 and mention uncertainty.
+- Avoid marketing fluff; be neutral.`;
+  }
+  // Vietnamese default
+  return `Bạn là trợ lý tài chính cá nhân trả lời NGẮN GỌN.
+- Luôn trả lời bằng tiếng Việt đơn giản, rõ ràng (tối đa 2 câu ngắn).
+- Chỉ dùng dữ liệu trong context & lịch sử, không bịa.
+- Trả về JSON:
+{
+  "answer": string,
+  "confidence": number (0..1),
+  "recommendations": string[],
+  "followUpQuestions": string[],
+  "disclaimers": string[]
+}
+- recommendations: tối đa 2; followUpQuestions: tối đa 2.
+- Nếu không chắc chắn đặt confidence <= 0.6 và nói rõ.
+- Tránh ngôn ngữ quảng cáo hoặc lan man.`;
+};
 
 const DEFAULT_DISCLAIMER =
   'Thông tin chỉ mang tính tham khảo, không phải là tư vấn tài chính chuyên nghiệp.';
@@ -1034,15 +1051,28 @@ export const chat = async (userId, payload = {}) => {
     conversation.messages.map((msg) => ({ role: msg.role, content: msg.content })),
   );
 
+  // Detect language of user question (simple heuristic)
+  const detectLanguage = (text) => {
+    if (!text) return 'vi';
+    const hasVietnamese = /[áàảãạăắằẳẵặâấầẩẫậđéèẻẽẹêếềểễệíìỉĩịóòỏõọôốồổỗộơớờởỡợúùủũụưứừửữựýỳỷỹỵ]/i.test(text);
+    if (hasVietnamese) return 'vi';
+    const englishHits = (text.match(/\b(the|what|how|is|are|spend|budget|month|report|goal|analysis)\b/gi) || []).length;
+    if (englishHits >= 2) return 'en';
+    return 'vi';
+  };
+  // Allow client override via payload.lang = 'vi' | 'en'
+  const langParam = typeof payload.lang === 'string' ? payload.lang.toLowerCase() : null;
+  const lang = (langParam === 'vi' || langParam === 'en') ? langParam : detectLanguage(question);
+
   const messages = [
-    { role: 'system', content: AI_CHAT_SYSTEM_PROMPT },
+    { role: 'system', content: buildChatSystemPrompt(lang) },
     {
       role: 'system',
-      content: `Thông tin người dùng: ${JSON.stringify(snapshot.profile)}\nÝ định dự đoán: ${intent} (độ tin cậy ${intentConfidence}).`,
+      content: `User profile: ${JSON.stringify(snapshot.profile)}\nPredicted intent: ${intent} (confidence ${intentConfidence}).\nContext language: ${lang}`,
     },
     {
       role: 'assistant',
-      content: `Tóm tắt tài chính gần đây:\n${contextSummary}`,
+      content: (lang === 'vi' ? 'Tóm tắt gần đây:' : 'Recent summary:') + `\n${contextSummary}`,
     },
     ...historyMessages,
     { role: 'user', content: question },
@@ -1067,6 +1097,37 @@ export const chat = async (userId, payload = {}) => {
   const latencyMs = Date.now() - startedAt;
 
   const parsed = parseAssistantResponse(rawResponse);
+
+  // Post-process to enforce simplicity & language consistency
+  const simplifyAnswer = (text) => {
+    if (!text || typeof text !== 'string') return text;
+    // Remove excessive whitespace
+    let cleaned = text.replace(/\s+/g, ' ').trim();
+    // Split sentences by period/question/exclamation
+    const sentences = cleaned.split(/(?<=[\.\?\!])\s+/);
+    const limited = sentences.slice(0, 2).join(' ').trim();
+    // If still long (> 300 chars) cut at 300 preserving whole word
+    if (limited.length > 300) {
+      cleaned = limited.slice(0, 300).replace(/\S+$/, '').trim();
+      return cleaned;
+    }
+    return limited;
+  };
+
+  parsed.answer = simplifyAnswer(parsed.answer || rawResponse);
+
+  // Trim arrays lengths
+  if (Array.isArray(parsed.recommendations)) {
+    parsed.recommendations = parsed.recommendations.slice(0, 2).map(simplifyAnswer);
+  }
+  if (Array.isArray(parsed.followUpQuestions)) {
+    parsed.followUpQuestions = parsed.followUpQuestions.slice(0, 2).map(simplifyAnswer);
+  }
+
+  // Localize disclaimers
+  const disclaimerVi = 'Thông tin chỉ để tham khảo, không phải tư vấn tài chính chuyên nghiệp.';
+  const disclaimerEn = 'Information is for reference only and not professional financial advice.';
+  parsed.disclaimers = [lang === 'en' ? disclaimerEn : disclaimerVi];
   parsed.disclaimers =
     Array.isArray(parsed.disclaimers) && parsed.disclaimers.length > 0
       ? parsed.disclaimers
@@ -1150,6 +1211,7 @@ export const chat = async (userId, payload = {}) => {
       disclaimers: parsed.disclaimers,
       intent,
       model: recommendedModel,
+      language: lang,
       usage: {
         monthlyLimit: quota.limit ?? null,
         used: quota.usageCount,
@@ -1159,6 +1221,7 @@ export const chat = async (userId, payload = {}) => {
         intentConfidence,
         complexity,
         latencyMs,
+        language: lang,
       },
     },
   };
