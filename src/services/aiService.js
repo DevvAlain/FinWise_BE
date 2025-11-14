@@ -45,7 +45,7 @@ const ADVANCED_MODEL =
 const FAST_MODEL =
   process.env.OPENROUTER_MODEL_FAST ||
   process.env.OPENROUTER_MODEL ||
-  'z-ai/glm-4.5-air:free';
+  'qwen/qwen3-4b:free';
 
 // Dynamic system prompt builder to support multi-language simple responses
 const buildChatSystemPrompt = (lang = 'vi') => {
