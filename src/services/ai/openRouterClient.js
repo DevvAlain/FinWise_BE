@@ -1,5 +1,5 @@
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'z-ai/glm-4.5-air:free';
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'qwen/qwen3-4b:free';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_SITE = process.env.OPENROUTER_SITE || 'http://localhost';
 const OPENROUTER_TITLE = process.env.OPENROUTER_TITLE || 'BE_NVIDIA';
